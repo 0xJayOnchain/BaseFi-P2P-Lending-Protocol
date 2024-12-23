@@ -29,19 +29,31 @@ contract LendingPool is ReentrancyGuard, Ownable {
     mapping(address => uint256) public ownerFees;
 
     event Deposit(address indexed token, address indexed user, uint256 amount, uint256 ownerFee);
-    event Borrow(address indexed token, address indexed user, uint256 amount, address collateralToken, uint256 collateralAmount, uint256 ownerFee);
+    event Borrow(
+        address indexed token,
+        address indexed user,
+        uint256 amount,
+        address collateralToken,
+        uint256 collateralAmount,
+        uint256 ownerFee
+    );
     event Repay(address indexed token, address indexed user, uint256 amount, uint256 ownerFee);
     event Withdraw(address indexed token, address indexed user, uint256 amount);
-    event Liquidate(address indexed token, address indexed borrower, address liquidator, uint256 amount, uint256 ownerFee);
+    event Liquidate(
+        address indexed token, address indexed borrower, address liquidator, uint256 amount, uint256 ownerFee
+    );
     event OwnerFeeClaimed(address indexed token, uint256 amount);
 
     constructor() Ownable(msg.sender) {}
 
+    // @audit: verify token is actually a contract.
+    // Currently only checks if it is not the deployer address
     function addSupportedToken(address token) external onlyOwner {
         require(token != address(0), "Invalid token address");
         supportedTokens[token] = true;
     }
 
+    // @audit: over/underflow possible here?
     function calculateOwnerFee(uint256 amount) public pure returns (uint256) {
         return (amount * OWNER_FEE_BPS) / 10000;
     }
@@ -66,12 +78,10 @@ contract LendingPool is ReentrancyGuard, Ownable {
         emit Deposit(token, msg.sender, depositAmount, ownerFee);
     }
 
-    function borrow(
-        address borrowToken,
-        uint256 borrowAmount,
-        address collateralToken,
-        uint256 collateralAmount
-    ) external nonReentrant {
+    function borrow(address borrowToken, uint256 borrowAmount, address collateralToken, uint256 collateralAmount)
+        external
+        nonReentrant
+    {
         require(supportedTokens[borrowToken], "Borrow token not supported");
         require(supportedTokens[collateralToken], "Collateral token not supported");
         require(borrowAmount > 0, "Borrow amount must be greater than 0");
@@ -139,12 +149,8 @@ contract LendingPool is ReentrancyGuard, Ownable {
         BorrowPosition storage position = borrowPositions[borrowToken][borrower];
         require(position.amount > 0, "No active borrow position");
 
-        bool isUnderCollateralized = !isCollateralSufficient(
-            borrowToken,
-            position.amount,
-            position.collateralToken,
-            position.collateralAmount
-        );
+        bool isUnderCollateralized =
+            !isCollateralSufficient(borrowToken, position.amount, position.collateralToken, position.collateralAmount);
         require(isUnderCollateralized, "Position is sufficiently collateralized");
 
         uint256 ownerFee = calculateOwnerFee(position.amount);
