@@ -58,4 +58,22 @@ contract LendingPoolTest is Test {
         pool.addSupportedToken(newToken);
         assertTrue(pool.supportedTokens(newToken));
     }
+
+    // Test deposits
+    function testDeposit() public {
+        vm.startPrank(user1);
+        pool.deposit(address(token1), DEPOSIT_AMOUNT);
+
+        (uint256 amount, uint256 timestamp, uint256 rate) = pool.lendingPositions(address(token1), user1);
+        // Verify the deposited amount minus the owner fee
+        assertEq(amount, DEPOSIT_AMOUNT - pool.calculateOwnerFee(DEPOSIT_AMOUNT));
+
+        // Verify the timestamp matches when we made the deposit
+        assertEq(timestamp, block.timestamp);
+
+        // Verify an interest rate was set (just checking it's > 0)
+        assertGt(rate, 0);
+
+        vm.stopPrank(); // Stop acting as user1
+    }
 }
