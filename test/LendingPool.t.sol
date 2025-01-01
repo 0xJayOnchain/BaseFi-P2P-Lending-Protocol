@@ -59,6 +59,22 @@ contract LendingPoolTest is Test {
         assertTrue(pool.supportedTokens(newToken));
     }
 
+    // Test owner fee calculation
+    // @audit:
+    // Could be added in separate tests:
+
+    // Very small amounts? (test for rounding)
+    // Very large amounts? (test for overflow)
+    // Zero amount?
+
+    // Different fee percentages
+    // Math precision tests
+    function testCalculateOwnerFee() public {
+        uint256 amount = 1000e18;
+        uint256 expectedFee = (amount * pool.OWNER_FEE_BPS()) / 10000;
+        assertEq(pool.calculateOwnerFee(amount), expectedFee);
+    }
+
     // Test deposits
     function testDeposit() public {
         vm.startPrank(user1);
@@ -71,9 +87,9 @@ contract LendingPoolTest is Test {
         // Verify the timestamp matches when we made the deposit
         assertEq(timestamp, block.timestamp);
 
-        // Verify an interest rate was set (just checking it's > 0)
+        // Verify an interest rate was set (just checking it's > 0 for now. Needs to be updated.)
         assertGt(rate, 0);
 
-        vm.stopPrank(); // Stop acting as user1
+        vm.stopPrank();
     }
 }
