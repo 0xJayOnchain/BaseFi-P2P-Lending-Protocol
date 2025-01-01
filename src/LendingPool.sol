@@ -24,7 +24,7 @@ contract LendingPool is ReentrancyGuard, Ownable {
     mapping(address => mapping(address => BorrowPosition)) public borrowPositions;
     mapping(address => bool) public supportedTokens;
     uint256 public platformFee = 30;
-    uint256 public constant OWNER_FEE_BPS = 1;
+    uint256 public constant OWNER_FEE_BPS = 10;
     uint256 public minCollateralRatio = 150;
     mapping(address => uint256) public ownerFees;
 
@@ -46,14 +46,11 @@ contract LendingPool is ReentrancyGuard, Ownable {
 
     constructor() Ownable(msg.sender) {}
 
-    // @audit: verify token is actually a contract.
-    // Currently only checks if it is not the deployer address
     function addSupportedToken(address token) external onlyOwner {
         require(token != address(0), "Invalid token address");
         supportedTokens[token] = true;
     }
 
-    // @audit: over/underflow possible here?
     function calculateOwnerFee(uint256 amount) public pure returns (uint256) {
         return (amount * OWNER_FEE_BPS) / 10000;
     }
