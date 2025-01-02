@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Test, console2} from "forge-std/Test.sol";
+import {Test, console2, console} from "forge-std/Test.sol";
 import {LendingPool} from "../src/LendingPool.sol";
 import {MockERC20} from "../src/MockERC20.sol";
 
@@ -91,5 +91,25 @@ contract LendingPoolTest is Test {
         assertGt(rate, 0);
 
         vm.stopPrank();
+    }
+
+    // Test borrow
+    // @audit: better way to check this?
+    function testBorrow() public {
+        uint256 fundsBefore = token1.balanceOf(user2);
+        // Make intial deposit
+        vm.startPrank(user1);
+        pool.deposit(address(token1), DEPOSIT_AMOUNT);
+        vm.stopPrank();
+
+        // Borrow from deposited funds
+        vm.startPrank(user2);
+        pool.borrow(address(token1), BORROW_AMOUNT, address(token2), COLLATERAL_AMOUNT);
+        vm.stopPrank();
+
+        uint256 fundsAfter = token1.balanceOf(user2);
+
+        // Test if user2 now has the borrowed amount
+        assert(fundsAfter > fundsBefore);
     }
 }
