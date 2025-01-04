@@ -246,4 +246,20 @@ contract LendingPoolTest is Test {
         (uint256 amount,,,,) = pool.borrowPositions(address(token1), user2);
         assertEq(amount, (BORROW_AMOUNT - pool.calculateOwnerFee(BORROW_AMOUNT)) / 2);
     }
+
+    // Test withdrawals
+    // @audit: This needs to also test for lock periouds.
+    // Lender should not be able to withdraw whenever they like and should only do it after initial term is met.
+    function testWithdraw() public {
+        // Setup: deposit first
+        vm.prank(user1);
+        pool.deposit(address(token1), DEPOSIT_AMOUNT);
+
+        uint256 withdrawAmount = DEPOSIT_AMOUNT/2;
+        vm.prank(user1);
+        pool.withdraw(address(token1), withdrawAmount);
+
+        (uint256 amount,,) = pool.lendingPositions(address(token1), user1);
+        assertEq(amount, DEPOSIT_AMOUNT - pool.calculateOwnerFee(DEPOSIT_AMOUNT) - withdrawAmount);
+    }
 }
