@@ -59,14 +59,6 @@ contract LendingPoolTest is Test {
         assertTrue(pool.supportedTokens(newToken));
     }
 
-    // Test owner fee calculation
-    // @audit:
-    // Could be added in separate tests:
-
-    // Very small amounts? (test for rounding)
-    // Very large amounts? (test for overflow)
-    // Zero amount?
-
     // Different fee percentages
     // Math precision tests
     function testCalculateOwnerFee() public {
@@ -122,22 +114,6 @@ contract LendingPoolTest is Test {
         assertGt(rate, 0); // @audit Update rate
         assertEq(collateralToken, address(token2));
     }
-
-    // @audit: failing
-    // function testFailBorrowWithInsufficientCollateral() public {
-    //     // First deposit some tokens to the pool
-    //     vm.prank(user1);
-    //     pool.deposit(address(token1), DEPOSIT_AMOUNT);
-
-    //     // Try to borrow with too little collateral
-    //     // Assuming minCollateralRatio is 150%
-    //     uint256 lowCollateralAmount = BORROW_AMOUNT; // 1:1 ratio, should fail
-
-    //     vm.startPrank(user2);
-    //     // This should fail due to insufficient collateral
-    //     pool.borrow(address(token1), BORROW_AMOUNT, address(token2), lowCollateralAmount);
-    //     vm.stopPrank();
-    // }
 
     function testFailBorrowUnsupportedToken() public {
         // Deploy a new token that isn't supported
@@ -250,6 +226,7 @@ contract LendingPoolTest is Test {
     // Test withdrawals
     // @audit: This needs to also test for lock periouds.
     // Lender should not be able to withdraw whenever they like and should only do it after initial term is met.
+    // What happens after term, and borrower has not returned funds?
     function testWithdraw() public {
         // Setup: deposit first
         vm.prank(user1);
@@ -261,5 +238,17 @@ contract LendingPoolTest is Test {
 
         (uint256 amount,,) = pool.lendingPositions(address(token1), user1);
         assertEq(amount, DEPOSIT_AMOUNT - pool.calculateOwnerFee(DEPOSIT_AMOUNT) - withdrawAmount);
+    }
+
+    // Test interest calculation
+    function testCalculateInterest() public {
+        vm.prank(user1);
+        pool.deposit(address(token1), DEPOSIT_AMOUNT);
+
+        // Advance time by 1 year
+        vm.warp(block.timestamp + 365 days);
+
+        uint256 interest = pool.calculateInterest(address(token1), user1);
+        assertTrue(interest > 0);
     }
 }
