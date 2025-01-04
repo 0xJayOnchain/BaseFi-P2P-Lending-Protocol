@@ -59,14 +59,6 @@ contract LendingPoolTest is Test {
         assertTrue(pool.supportedTokens(newToken));
     }
 
-    // Test owner fee calculation
-    // @audit:
-    // Could be added in separate tests:
-
-    // Very small amounts? (test for rounding)
-    // Very large amounts? (test for overflow)
-    // Zero amount?
-
     // Different fee percentages
     // Math precision tests
     function testCalculateOwnerFee() public {
@@ -122,22 +114,6 @@ contract LendingPoolTest is Test {
         assertGt(rate, 0); // @audit Update rate
         assertEq(collateralToken, address(token2));
     }
-
-    // @audit: failing
-    // function testFailBorrowWithInsufficientCollateral() public {
-    //     // First deposit some tokens to the pool
-    //     vm.prank(user1);
-    //     pool.deposit(address(token1), DEPOSIT_AMOUNT);
-
-    //     // Try to borrow with too little collateral
-    //     // Assuming minCollateralRatio is 150%
-    //     uint256 lowCollateralAmount = BORROW_AMOUNT; // 1:1 ratio, should fail
-
-    //     vm.startPrank(user2);
-    //     // This should fail due to insufficient collateral
-    //     pool.borrow(address(token1), BORROW_AMOUNT, address(token2), lowCollateralAmount);
-    //     vm.stopPrank();
-    // }
 
     function testFailBorrowUnsupportedToken() public {
         // Deploy a new token that isn't supported
