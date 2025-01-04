@@ -255,7 +255,7 @@ contract LendingPoolTest is Test {
         vm.prank(user1);
         pool.deposit(address(token1), DEPOSIT_AMOUNT);
 
-        uint256 withdrawAmount = DEPOSIT_AMOUNT/2;
+        uint256 withdrawAmount = DEPOSIT_AMOUNT / 2;
         vm.prank(user1);
         pool.withdraw(address(token1), withdrawAmount);
 
