@@ -1,6 +1,6 @@
 ## P2P Lending Protocol
 
-This is a P2P Lending Protocol built with the BASE ecosystem in mind.
+This is a P2P Lending Protocol built to make lending easier.
 
 ## Goals
 - [x] Build out a functioning P2P protocol <!-- In Progress -->
