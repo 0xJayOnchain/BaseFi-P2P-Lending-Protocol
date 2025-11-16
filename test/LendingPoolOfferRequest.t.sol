@@ -36,7 +36,8 @@ contract LendingPoolOfferRequestTest is Test {
     function testCreateAndCancelLendingOffer() public {
         vm.startPrank(lender);
         lendToken.approve(address(pool), 100 ether);
-        uint256 id = pool.createLendingOffer(address(lendToken), 100 ether, 600, 90 days, address(collateralToken), 15000);
+        uint256 id =
+            pool.createLendingOffer(address(lendToken), 100 ether, 600, 90 days, address(collateralToken), 15000);
         // pool should hold tokens
         assertEq(lendToken.balanceOf(address(pool)), 100 ether);
 
@@ -49,7 +50,8 @@ contract LendingPoolOfferRequestTest is Test {
     function testCreateAndCancelBorrowRequest() public {
         vm.startPrank(borrower);
         collateralToken.approve(address(pool), 500 ether);
-        uint256 id = pool.createBorrowRequest(address(lendToken), 50 ether, 800, 90 days, address(collateralToken), 500 ether);
+        uint256 id =
+            pool.createBorrowRequest(address(lendToken), 50 ether, 800, 90 days, address(collateralToken), 500 ether);
         assertEq(collateralToken.balanceOf(address(pool)), 500 ether);
 
         pool.cancelBorrowRequest(id);
@@ -60,7 +62,8 @@ contract LendingPoolOfferRequestTest is Test {
     function testCancelOfferOnlyByLender() public {
         vm.startPrank(lender);
         lendToken.approve(address(pool), 10 ether);
-        uint256 id = pool.createLendingOffer(address(lendToken), 10 ether, 600, 30 days, address(collateralToken), 15000);
+        uint256 id =
+            pool.createLendingOffer(address(lendToken), 10 ether, 600, 30 days, address(collateralToken), 15000);
         vm.stopPrank();
 
         vm.prank(borrower);
@@ -71,7 +74,8 @@ contract LendingPoolOfferRequestTest is Test {
     function testCancelRequestOnlyByBorrower() public {
         vm.startPrank(borrower);
         collateralToken.approve(address(pool), 20 ether);
-        uint256 id = pool.createBorrowRequest(address(lendToken), 5 ether, 800, 30 days, address(collateralToken), 20 ether);
+        uint256 id =
+            pool.createBorrowRequest(address(lendToken), 5 ether, 800, 30 days, address(collateralToken), 20 ether);
         vm.stopPrank();
 
         vm.prank(lender);

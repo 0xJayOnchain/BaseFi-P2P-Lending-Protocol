@@ -6,6 +6,7 @@ import "lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import "lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
 import "./BaseP2P.sol";
 import "./PriceOracle.sol";
+import "./interfaces/ILoanPositionNFT.sol";
 
 contract LendingPool is BaseP2P, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -37,6 +38,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
     }
 
     PriceOracle public priceOracle;
+    ILoanPositionNFT public loanPositionNFT;
 
     uint256 public nextOfferId = 1;
     uint256 public nextRequestId = 1;
@@ -46,11 +48,17 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
 
     event LendingOfferCreated(uint256 indexed id, address indexed lender, address lendToken, uint256 amount);
     event LendingOfferCancelled(uint256 indexed id);
-    event BorrowRequestCreated(uint256 indexed id, address indexed borrower, address collateralToken, uint256 collateralAmount);
+    event BorrowRequestCreated(
+        uint256 indexed id, address indexed borrower, address collateralToken, uint256 collateralAmount
+    );
     event BorrowRequestCancelled(uint256 indexed id);
 
     constructor(address _priceOracle) BaseP2P() {
         priceOracle = PriceOracle(_priceOracle);
+    }
+
+    function setLoanPositionNFT(address _nft) external onlyOwner {
+        loanPositionNFT = ILoanPositionNFT(_nft);
     }
 
     function createLendingOffer(
@@ -60,7 +68,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
         uint256 durationSecs,
         address collateralToken,
         uint256 collateralRatioBPS
-    ) external nonReentrant returns (uint256) {
+    ) external virtual nonReentrant returns (uint256) {
         require(amount > 0, "amount>0");
         // transfer principal into escrow
         _safeTransferFrom(IERC20(lendToken), msg.sender, address(this), amount);
@@ -83,7 +91,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
         return id;
     }
 
-    function cancelLendingOffer(uint256 offerId) external nonReentrant {
+    function cancelLendingOffer(uint256 offerId) external virtual nonReentrant {
         Offer storage o = offers[offerId];
         require(o.active, "not active");
         require(o.lender == msg.sender, "only lender");
@@ -101,7 +109,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
         uint256 durationSecs,
         address collateralToken,
         uint256 collateralAmount
-    ) external nonReentrant returns (uint256) {
+    ) external virtual nonReentrant returns (uint256) {
         require(amount > 0, "amount>0");
         require(collateralAmount > 0, "collateral>0");
 
@@ -126,7 +134,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
         return id;
     }
 
-    function cancelBorrowRequest(uint256 requestId) external nonReentrant {
+    function cancelBorrowRequest(uint256 requestId) external virtual nonReentrant {
         Request storage r = requests[requestId];
         require(r.active, "not active");
         require(r.borrower == msg.sender, "only borrower");

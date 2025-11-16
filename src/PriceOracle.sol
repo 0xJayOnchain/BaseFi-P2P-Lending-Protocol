@@ -24,7 +24,7 @@ contract PriceOracle is Ownable {
     function getNormalizedPrice(address token) public view returns (uint256) {
         address feed = priceFeeds[token];
         require(feed != address(0), "Price feed not set");
-        (, int256 answer, , , ) = IChainlinkAggregator(feed).latestRoundData();
+        (, int256 answer,,,) = IChainlinkAggregator(feed).latestRoundData();
         require(answer > 0, "Invalid price");
         uint8 dec = IChainlinkAggregator(feed).decimals();
 

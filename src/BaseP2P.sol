@@ -14,12 +14,7 @@ contract BaseP2P is Ownable {
 
     constructor() Ownable(msg.sender) {}
 
-    function _safeTransferFrom(
-        IERC20 token,
-        address from,
-        address to,
-        uint256 amount
-    ) internal {
+    function _safeTransferFrom(IERC20 token, address from, address to, uint256 amount) internal {
         token.safeTransferFrom(from, to, amount);
     }
 

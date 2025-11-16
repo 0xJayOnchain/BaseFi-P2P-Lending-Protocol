@@ -97,133 +97,52 @@ forge test -vv
 ```
 
 Current todo checklist (up-to-date)
+Handoff Summary — BaseFi P2P Lending Protocol (up-to-date)
 
+Project purpose and current baseline
+
+Purpose: A true peer-to-peer (P2P) lending protocol where lenders and borrowers create offers and requests that are matched directly; no pooled lending. Each loan is an atomic match between a lender and a borrower.
+Current repo state (progress): Minimal proof-of-concept present and extended with initial utilities, escrow flows, and pool-prep work (NFT contract + interfaces).
+
+Implemented so far (v1 foundation)
+- `BaseP2P.sol` — SafeERC20 helpers
+- `PriceOracle.sol` + `MockAggregator.sol` — oracle registry and tests
+- `MockERC20.sol` — test ERC20 (configurable decimals + mint)
+- `LendingPool.sol` — offer/request escrow create & cancel
+- `LoanPositionNFT.sol` — ERC721 position token with `MINTER_ROLE`
+- Tests: `PriceOracle.t.sol`, `LendingPoolOfferRequest.t.sol`, `PoolAdapter.t.sol` — all passing locally with `forge test`
+
+Next design & planned work
+- Matching & loan creation + NFT minting (next): implement `acceptOfferByBorrower` and `acceptRequestByLender`, create `Loan` struct and mint two NFTs per loan (lender/borrower) via `LoanPositionNFT`.
+- After that: `repay` (interest math + owner fees), `liquidate` (penalty), NFT behavior tests, and security/CI.
+
+Design decisions confirmed for v1
+- Full-fill-only: offers/requests are full-fill-only (no partial fills).
+- NFTs transfer financial rights: transferring a position NFT transfers the right to act on that side of the loan.
+- Liquidation penalty: default 200 bps (2%), applied to principal only (configurable).
+- Owner fee: taken on interest only (configurable `ownerFeeBPS`).
+
+Current TODO checklist
 - [x] Prep & utilities: SafeERC20, PriceOracle, MockAggregator, BaseP2P
 - [x] Add test `PriceOracle.t.sol` and pass
 - [x] Add `MockERC20` and tests
 - [x] Implement `LendingPool.sol` skeleton: Offer/Request structs and escrow-on-create/cancel
 - [x] Add tests `LendingPoolOfferRequest.t.sol` and pass
-- [ ] Implement matching & loan creation (acceptOfferByBorrower, acceptRequestByLender)
-- [ ] Implement `LoanPositionNFT` (ERC-721) and minting two tokens per loan
+- [x] Prep for pools: `ILoanPositionNFT`, `LoanPositionNFT`, `PoolAdapterMock` test
+- [ ] Implement matching & loan creation (acceptOfferByBorrower, acceptRequestByLender) — in progress next
 - [ ] Implement `repay` with interest math and ownerFee accounting
 - [ ] Implement `liquidate` with penaltyBPS logic and tests
 - [ ] NFT secondary-market tests (transfer rights)
 - [ ] Security hardening, static analysis, and CI
 - [ ] Update README and docs
 
-Notes
+How to run tests locally.
 
-- All changes so far compile and tests pass locally (Forge, macOS zsh environment). If you'd like, I can implement the matching + NFT pieces next — confirm whether you want a single ERC-721 for both roles and whether liquidation should transfer collateral token as-is (recommended).
-
+Navigate to Project
+Run
+```bash
+forge test -vv
 ```
 
-Handoff Summary — BaseFi P2P Lending Protocol (for implementation)
-
-Project purpose and current baseline
-
-Purpose: A true peer-to-peer (P2P) lending protocol where lenders and borrowers create offers and requests that are matched directly; no pooled lending. Each loan is an atomic match between a lender and a borrower.
-Current repo: Minimal proof-of-concept: LendingPool.sol and LendingPool.t.sol with basic deposit/borrow/repay/withdraw logic and tests. Many features are stubs (oracle integration, matching, NFT issuance).
-High-level P2P model (requirements you provided)
-
-Lender (Person A) creates a lending offer by escrow-ing their principal (e.g., 1000 USDC) into contract and specifying:
-Principal amount, interest rate (e.g., 6% APR), duration (e.g., 3 months), required collateral token (e.g., cbBTC), required collateral ratio (e.g., 150%).
-Borrower (Person B) creates a borrow request by escrow-ing collateral (e.g., $1500 cbBTC) and specifying amount requested, duration, max interest rate. Or borrower accepts an existing lender offer by escrow-ing collateral at accept time.
-When an offer and request are matched (acceptOfferByBorrower or acceptRequestByLender), the contract creates a Loan (match), transfers the principal to borrower, and collateral remains escrowed.
-NFTs: Upon loan creation, the contract mints transferable ERC-721 NFTs representing borrower/right and lender/right (two NFTs per loan) — sale/transfer of these NFTs transfers claim/rights to the loan proceeds.
-Repayment: Borrower must manually repay (allowed any time during loan). Interest accrues linearly; early repayment pays prorated interest to the lender. On full repayment, collateral is returned to borrower and lender receives principal + interest (minus configurable owner fee on interest).
-Expiry & liquidation: If borrower does not repay by deadline (end of duration), lender can liquidate: taking collateral and receiving principal + agreed interest + penalty (e.g., 2% penalty). Penalty application is configurable.
-Fee model: Owner (platform) receives a fee on interest (ownerFeeBPS); fee is configurable by owner.
-Major design decisions / assumptions (v1 defaults)
-
-v1 is full-fill-only: offers/requests must be matched/filled in full (no partial fills). This simplifies escrow accounting and lifecycle.
-Escrow-on-create: lenders must escrow principal at offer creation; borrowers must escrow collateral at request creation. Accept actions check escrowed balances and atomically form loan.
-NFTs represent financial claims; transferring NFT transfers claim to lender/buyer or borrower/buyer (i.e., NFT transfer conveys the right to claim loan proceeds or collateral per loan state).
-Oracle valuation: Use Chainlink price feeds (token => aggregator) to value collateral relative to borrow token. Tests will use mock price feeds.
-Token handling: Use OpenZeppelin SafeERC20 to safely handle tokens that don't return bool.
-Data model & API sketch (key structs and functions)
-
-Struct Offer { id, lender, lendToken, amount, interestRateBPS, durationSecs, collateralToken, collateralRatioBPS, createdAt, active }
-Struct Request { id, borrower, borrowToken, amount, maxInterestRateBPS, durationSecs, collateralToken, collateralAmount, createdAt, active }
-Struct Loan { id, offerId, requestId, lender, borrower, lendToken, collateralToken, principal, interestRateBPS, startTime, durationSecs, collateralAmount, repaid, liquidated }
-Mappings: offers[id] => Offer; requests[id] => Request; loans[id] => Loan; tokenPriceFeed[token] => aggregator address; counters for ids.
-Key functions:
-createLendingOffer(lendToken, amount, interestRateBPS, durationSecs, collateralToken, collateralRatioBPS) — lender transferFrom escrow
-cancelLendingOffer(offerId) — lender can cancel and refund if not matched
-createBorrowRequest(borrowToken, amount, maxInterestRateBPS, durationSecs, collateralToken, collateralAmount) — borrower transferFrom collateral
-cancelBorrowRequest(requestId) — borrower can cancel and refund if not matched
-acceptOfferByBorrower(offerId) — borrower transfers collateral (if not pre-escrowed) and loan created atomically
-acceptRequestByLender(requestId) — lender transfers principal to escrow, loan created atomically, borrower receives principal
-repay(loanId, amount) — borrower repays principal + prorated interest; on full repay, collateral returned and NFTs effectively burned/transferred as appropriate
-liquidate(loanId) — lender (or authorized holder of lender NFT) can liquidate after expiry (or if collateral insufficient) to claim collateral; receives principal + interest + penalty; loan marked liquidated
-claimOwnerFees(token) — owner claims accumulated fees (owner fee taken on interest)
-setPriceFeed(token, aggregator), addSupportedToken, setOwnerFeeBps, setPenaltyBps — admin functions
-NFTs
-LoanPositionNFT (ERC721) mapping tokenId -> { loanId, role (lender/borrower) }.
-Mint borrower & lender NFTs on loan creation; NFT ownership determines who can call claim functions and transfer rights.
-Interest & math
-
-Use basis points (bps) for accuracy: interestRateBPS e.g., 600 = 6.00%
-Interest accrual formula (linear):
-accruedInterest = principal * interestRateBPS * elapsedSeconds / (365 days * 10000)
-Early repayment: pay principal + prorated interest for elapsed time. Owner fee taken on the interest portion: ownerFee = accruedInterest * ownerFeeBPS / 10000; lender receives accruedInterest - ownerFee + principal.
-Penalty on liquidation: default 200 bps (2%) applied to principal (or configurable). Clarify if penalty applies to principal only or principal + interest.
-Escrow semantics & NFT transfer implications
-
-Escrow on create prevents lender or borrower from trying to match without collateral/principal.
-NFTs convey claim rights; when NFTs are transferred, the new holder gets the right to claim future proceeds (e.g., lender sells their lender NFT to a third party who can later claim repayments or liquidate the loan after expiry).
-Implementation must keep loan state independent of NFT ownership; NFT ownership is the source-of-truth for who may call lender-specific actions (or a mapping ownerOfLenderRight -> loanId can be read from NFT).
-Testing & QA plan
-
-Unit tests:
-Offer/request lifecycle (create, cancel, accept), escrow balances, failure cases.
-Matching & loan creation: correct fund transfers, NFTs minted with correct metadata, loan state.
-Repay flows: early repay, full repay at maturity, partial repay (if permitted), owner fee deductions.
-Liquidation: lender can liquidate after expiry, penalty calculation, collateral transfer.
-Oracle tests: mock Chainlink aggregators to test collateral sufficiency and price changes.
-Token edge-cases: tokens with 6 vs 18 decimals, tokens without bool returns, malicious tokens (reentrancy).
-NFT transfers: selling lender NFT transfers rights; ensure new holder can claim; original holder cannot after transfer.
-Fuzz tests for invariants (utilization, sums of balances).
-Static analysis with Slither and basic security checklist.
-CI: GitHub Actions to run forge test + linters/static analysis.
-Ordered implementation milestones (small, verifiable steps)
-
-Prep & utilities
-Integrate OpenZeppelin SafeERC20.
-Add a PriceFeed interface and a Chainlink mock for tests.
-Add token => priceFeed mapping and helper to fetch normalized price.
-Offer & Request creation (escrow)
-Implement escrow logic for offers/requests and cancellation/refund.
-Tests for escrow correctness.
-Matching & loan creation + NFT minting
-Implement acceptOfferByBorrower and acceptRequestByLender; create Loan objects; mint borrower/lender NFTs.
-Tests for funds moved and NFTs minted.
-Interest calculation & repay
-Implement repay with pro-rata early repayment math and owner fee on interest.
-Tests for early/late repay math and owner fee distribution.
-Loan expiry & liquidation (penalty)
-Implement expiry checks and liquidate restricted to lender (NFT owner), apply penalty and mark loan liquidated; ensure collateral distribution correct.
-Tests for liquidation scenarios.
-NFT behavior & secondary market tests
-Tests for transferring NFTs and resulting rights on claim/liquidate.
-Security hardening & CI
-Add static analysis, CI, and document security considerations.
-Docs & README
-Update README with usage examples and design notes.
-Decisions I made for v1 (please confirm or change)
-
-Full-fill-only for v1 (no partial fills) — simplifies implementation. Confirm yes/no.
-NFTs transfer financial rights (selling an NFT transfers the right to claim loan proceeds). Confirm yes/no.
-Liquidation penalty default = 2% applied to principal (not to principal+interest). Confirm yes/no.
-Owner fee is taken from interest only (configurable BPS). Confirm yes/no.
-First implementation step proposed (ready to start once you confirm)
-
-Step 1: SafeERC20 + PriceFeed utilities
-Replace raw IERC20.transfer/transferFrom calls with OpenZeppelin SafeERC20.
-Add a small IPriceFeed interface and a MockPriceFeed for tests.
-Add storage mapping(address => address) public priceFeeds; and helper getNormalizedPrice(token) to normalize aggregator decimals to 1e18.
-Run tests to ensure no regressions; this creates a safe foundation for oracle-dependent logic.
-What I need from you (quick)
-
-Confirm the four decisions above (full-fill-only, NFT rights, penalty application, owner fee on interest).
-Confirm starting step: proceed with Step 1 (SafeERC20 + PriceFeed utilities).
-If any other change to the high-level model is required, now is the time to update the handoff.
+Notes
+- All changes so far compile and tests pass locally (Forge on macOS).
