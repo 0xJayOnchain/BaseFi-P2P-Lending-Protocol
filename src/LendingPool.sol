@@ -2,10 +2,13 @@
 pragma solidity ^0.8.28;
 
 import "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import "../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
+import "./IPriceFeed.sol";
 import "../lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
 import "../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 
 contract LendingPool is ReentrancyGuard, Ownable {
+    using SafeERC20 for IERC20;
     struct LendingPosition {
         uint256 amount;
         uint256 timestamp;
@@ -20,14 +23,73 @@ contract LendingPool is ReentrancyGuard, Ownable {
         address collateralToken;
     }
 
+    struct LendingOffer {
+        uint256 offerId;
+        uint256 amount;
+        uint256 minInterestRate;
+        uint256 duration;
+        bool active;
+    }
+
+    struct BorrowRequest {
+        uint256 requestId;
+        uint256 amount;
+        uint256 maxInterestRate;
+        address collateralToken;
+        uint256 collateralAmount;
+        uint256 duration;
+        bool active;
+    }
+
+    struct Match {
+        uint256 matchId;
+        uint256 offerId;
+        uint256 requestId;
+        address lender;
+        address borrower;
+        uint256 amount;
+        uint256 interestRate;
+        uint256 startTime;
+        uint256 duration;
+        bool active;
+    }
+
+    // Counter for IDs
+    uint256 private offerIdCounter;
+    uint256 private requestIdCounter;
+    uint256 private matchIdCounter;
+
+     // Mappings for offers, requests, and matches
+    mapping(address => mapping(address => LendingOffer[])) public lendingOffers; // token => user => offers
+    mapping(address => mapping(address => BorrowRequest[])) public borrowRequests; // token => user => requests
+    mapping(uint256 => Match) public matches; // matchId => Match
+
     mapping(address => mapping(address => LendingPosition)) public lendingPositions;
     mapping(address => mapping(address => BorrowPosition)) public borrowPositions;
     mapping(address => bool) public supportedTokens;
+    mapping(address => address) public priceFeeds; // token => price feed
+    // Helper to fetch normalized price (1e18)
+    function getNormalizedPrice(address token) public view returns (uint256) {
+        address feed = priceFeeds[token];
+        require(feed != address(0), "No price feed");
+        uint8 decimals = IPriceFeed(feed).decimals();
+        int256 price = IPriceFeed(feed).latestAnswer();
+        require(price > 0, "Invalid price");
+        // Normalize to 1e18
+        return uint256(price) * (10 ** (18 - decimals));
+    }
     uint256 public platformFee = 30;
     uint256 public constant OWNER_FEE_BPS = 10;
     uint256 public minCollateralRatio = 150;
     mapping(address => uint256) public ownerFees;
 
+    // Events
+    event LendingOfferCancelled(address indexed token, address indexed lender, uint256 offerId);
+    event BorrowRequestCancelled(address indexed token, address indexed borrower, uint256 requestId);
+    event OfferModified(address indexed token, address indexed lender, uint256 offerId);
+    event RequestModified(address indexed token, address indexed borrower, uint256 requestId);
+    event MatchCreated(uint256 indexed matchId, address indexed lender, address indexed borrower);
+    event MatchClosed(uint256 indexed matchId);
     event Deposit(address indexed token, address indexed user, uint256 amount, uint256 ownerFee);
     event Borrow(
         address indexed token,
@@ -46,6 +108,11 @@ contract LendingPool is ReentrancyGuard, Ownable {
 
     constructor() Ownable(msg.sender) {}
 
+    function setPriceFeed(address token, address feed) external onlyOwner {
+        require(token != address(0) && feed != address(0), "Invalid address");
+        priceFeeds[token] = feed;
+    }
+
     function addSupportedToken(address token) external onlyOwner {
         require(token != address(0), "Invalid token address");
         supportedTokens[token] = true;
@@ -62,8 +129,7 @@ contract LendingPool is ReentrancyGuard, Ownable {
         uint256 ownerFee = calculateOwnerFee(amount);
         uint256 depositAmount = amount - ownerFee;
 
-        bool success = IERC20(token).transferFrom(msg.sender, address(this), amount);
-        require(success, "Token transfer failed");
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
 
         ownerFees[token] += ownerFee;
 
@@ -92,11 +158,8 @@ contract LendingPool is ReentrancyGuard, Ownable {
             "Insufficient collateral"
         );
 
-        bool collateralSuccess = IERC20(collateralToken).transferFrom(msg.sender, address(this), collateralAmount);
-        require(collateralSuccess, "Collateral transfer failed");
-
-        bool borrowSuccess = IERC20(borrowToken).transfer(msg.sender, actualBorrowAmount);
-        require(borrowSuccess, "Borrow token transfer failed");
+        IERC20(collateralToken).safeTransferFrom(msg.sender, address(this), collateralAmount);
+        IERC20(borrowToken).safeTransfer(msg.sender, actualBorrowAmount);
 
         ownerFees[borrowToken] += ownerFee;
 
@@ -120,8 +183,7 @@ contract LendingPool is ReentrancyGuard, Ownable {
 
         require(repaymentAmount <= position.amount, "Repayment exceeds borrow amount");
 
-        bool success = IERC20(token).transferFrom(msg.sender, address(this), amount);
-        require(success, "Repayment transfer failed");
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
 
         ownerFees[token] += ownerFee;
         position.amount -= repaymentAmount;
@@ -136,8 +198,7 @@ contract LendingPool is ReentrancyGuard, Ownable {
 
         position.amount -= amount;
 
-        bool success = IERC20(token).transfer(msg.sender, amount);
-        require(success, "Withdraw transfer failed");
+        IERC20(token).safeTransfer(msg.sender, amount);
 
         emit Withdraw(token, msg.sender, amount);
     }
@@ -155,8 +216,7 @@ contract LendingPool is ReentrancyGuard, Ownable {
 
         ownerFees[borrowToken] += ownerFee;
 
-        bool success = IERC20(position.collateralToken).transfer(msg.sender, position.collateralAmount);
-        require(success, "Collateral transfer failed");
+        IERC20(position.collateralToken).safeTransfer(msg.sender, position.collateralAmount);
 
         delete borrowPositions[borrowToken][borrower];
 
