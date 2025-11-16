@@ -71,4 +71,64 @@ contract ClaimFeesTest is Test {
     // ownerFees should be zeroed
     assertEq(pool.ownerFees(address(lendToken)), 0);
     }
+
+    function testClaimFeesMultipleTokens() public {
+        // set owner fee to 500 bps (5%)
+        pool.setOwnerFeeBPS(500);
+
+        // Create a second lend token
+        MockERC20 lendToken2 = new MockERC20("Lend2", "LND2", 18);
+        lendToken2.mint(lender, 1000 ether);
+
+        // --- Loan 1 with lendToken (existing lendToken from setUp)
+        vm.startPrank(lender);
+        lendToken.approve(address(pool), 100 ether);
+        uint256 offer1 = pool.createLendingOffer(address(lendToken), 100 ether, 1000, 90 days, address(collateralToken), 15000);
+        vm.stopPrank();
+
+        vm.startPrank(borrower);
+        collateralToken.approve(address(pool), 150 ether);
+        uint256 loan1 = pool.acceptOfferByBorrower(offer1, 150 ether);
+        vm.warp(block.timestamp + 30 days);
+        uint256 interest1 = pool.accruedInterest(loan1);
+        lendToken.mint(borrower, interest1);
+        lendToken.approve(address(pool), 100 ether + interest1);
+        pool.repayFull(loan1);
+        vm.stopPrank();
+
+        uint256 f1 = pool.ownerFees(address(lendToken));
+        assertGt(f1, 0);
+
+        // --- Loan 2 with lendToken2
+        vm.startPrank(lender);
+        lendToken2.approve(address(pool), 200 ether);
+        uint256 offer2 = pool.createLendingOffer(address(lendToken2), 200 ether, 2000, 90 days, address(collateralToken), 15000);
+        vm.stopPrank();
+
+        vm.startPrank(borrower);
+        collateralToken.approve(address(pool), 300 ether);
+        uint256 loan2 = pool.acceptOfferByBorrower(offer2, 300 ether);
+        vm.warp(block.timestamp + 15 days);
+        uint256 interest2 = pool.accruedInterest(loan2);
+        lendToken2.mint(borrower, interest2);
+        lendToken2.approve(address(pool), 200 ether + interest2);
+        pool.repayFull(loan2);
+        vm.stopPrank();
+
+        uint256 f2 = pool.ownerFees(address(lendToken2));
+        assertGt(f2, 0);
+
+        // Claim both as owner (this contract is owner)
+        uint256 bal1Before = lendToken.balanceOf(address(this));
+        uint256 bal2Before = lendToken2.balanceOf(address(this));
+        pool.claimOwnerFees(address(lendToken));
+        pool.claimOwnerFees(address(lendToken2));
+        uint256 bal1After = lendToken.balanceOf(address(this));
+        uint256 bal2After = lendToken2.balanceOf(address(this));
+
+        assertEq(bal1After - bal1Before, f1);
+        assertEq(bal2After - bal2Before, f2);
+        assertEq(pool.ownerFees(address(lendToken)), 0);
+        assertEq(pool.ownerFees(address(lendToken2)), 0);
+    }
 }
