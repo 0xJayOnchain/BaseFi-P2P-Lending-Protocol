@@ -26,14 +26,12 @@ contract UtilsTest is Test {
         vm.startPrank(user);
         token.approve(address(pool), 1000e18);
         pool.deposit(address(token), 100e18);
-        vm.stopPrank();
-        (uint256 amount,,) = pool.lendingPositions(address(token), user);
-        assertEq(amount, 100e18 - pool.calculateOwnerFee(100e18));
-    }
+        ```solidity
+        // SPDX-License-Identifier: MIT
+        pragma solidity ^0.8.28;
 
-    function testGetNormalizedPrice() public {
-        // price = 1.23456789, decimals = 8, normalized = 1.23456789 * 1e10 = 12345678900000
-        uint256 normalized = pool.getNormalizedPrice(address(token));
+        // DEPRECATED: Utility tests referencing pool-specific behavior were removed to focus the
+        // repository on P2P lending/borrowing. Keep test scaffolding minimal; add new P2P tests
+        // under `test/` when ready.
+        ```
         assertEq(normalized, 123456789 * 1e10);
-    }
-}

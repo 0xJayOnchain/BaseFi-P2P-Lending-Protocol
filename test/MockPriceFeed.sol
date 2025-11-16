@@ -5,10 +5,10 @@ contract MockPriceFeed {
     int256 private _price;
     uint8 private _decimals;
 
-    constructor(int256 initialPrice, uint8 decimals_) {
-        _price = initialPrice;
-        _decimals = decimals_;
-    }
+        constructor() {
+            // DEPRECATED: MockPriceFeed used by removed pool tests. Add or restore lightweight
+            // mocks for P2P tests when implementing oracle-dependent P2P flows.
+        }
 
     function setPrice(int256 newPrice) external {
         _price = newPrice;
