@@ -1,24 +1,26 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-contract MockPriceFeed {
-    int256 private _price;
+import "../src/IPriceFeed.sol";
+
+contract MockPriceFeed is IPriceFeed {
+    int256 private _answer;
     uint8 private _decimals;
 
-        constructor() {
-            // DEPRECATED: MockPriceFeed used by removed pool tests. Add or restore lightweight
-            // mocks for P2P tests when implementing oracle-dependent P2P flows.
-        }
-
-    function setPrice(int256 newPrice) external {
-        _price = newPrice;
+    constructor(int256 initialAnswer, uint8 decimals_) {
+        _answer = initialAnswer;
+        _decimals = decimals_;
     }
 
-    function latestAnswer() external view returns (int256) {
-        return _price;
+    function latestAnswer() external view override returns (int256) {
+        return _answer;
     }
 
-    function decimals() external view returns (uint8) {
+    function decimals() external view override returns (uint8) {
         return _decimals;
+    }
+
+    function setAnswer(int256 newAnswer) external {
+        _answer = newAnswer;
     }
 }
