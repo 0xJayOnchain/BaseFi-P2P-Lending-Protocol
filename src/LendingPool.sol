@@ -107,6 +107,10 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
     uint256 public penaltyBPS = 200; // default 2%
     mapping(address => uint256) public ownerFees; // token => amount
 
+    event OwnerFeeBpsUpdated(uint256 oldBps, uint256 newBps);
+    event PenaltyBpsUpdated(uint256 oldBps, uint256 newBps);
+    event OwnerFeesClaimed(address indexed token, address indexed to, uint256 amount);
+
     event LendingOfferCreated(uint256 indexed id, address indexed lender, address lendToken, uint256 amount);
     event LendingOfferCancelled(uint256 indexed id);
     event BorrowRequestCreated(
@@ -120,6 +124,20 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
 
     function setLoanPositionNFT(address _nft) external onlyOwner {
         loanPositionNFT = ILoanPositionNFT(_nft);
+    }
+
+    function setOwnerFeeBPS(uint256 bps) external onlyOwner {
+        require(bps <= 10000, "bps>10000");
+        uint256 old = ownerFeeBPS;
+        ownerFeeBPS = bps;
+        emit OwnerFeeBpsUpdated(old, bps);
+    }
+
+    function setPenaltyBPS(uint256 bps) external onlyOwner {
+        require(bps <= 10000, "bps>10000");
+        uint256 old = penaltyBPS;
+        penaltyBPS = bps;
+        emit PenaltyBpsUpdated(old, bps);
     }
 
     function createLendingOffer(
@@ -343,5 +361,14 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
         }
 
         L.repaid = true;
+    }
+
+    /// @notice Claim accumulated owner fees for a token
+    function claimOwnerFees(address token) external onlyOwner nonReentrant {
+        uint256 amt = ownerFees[token];
+        require(amt > 0, "no fees");
+        ownerFees[token] = 0;
+        _safeTransfer(IERC20(token), owner(), amt);
+        emit OwnerFeesClaimed(token, owner(), amt);
     }
 }
