@@ -46,6 +46,67 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
     mapping(uint256 => Offer) public offers;
     mapping(uint256 => Request) public requests;
 
+    struct Loan {
+        uint256 id;
+        uint256 offerId;
+        uint256 requestId;
+        address lender;
+        address borrower;
+        address lendToken;
+        address collateralToken;
+        uint256 principal;
+        uint256 interestRateBPS;
+        uint256 startTime;
+        uint256 durationSecs;
+        uint256 collateralAmount;
+        uint256 lenderPositionTokenId;
+        uint256 borrowerPositionTokenId;
+        bool repaid;
+        bool liquidated;
+    }
+
+    uint256 public nextLoanId = 1;
+    mapping(uint256 => Loan) private loans;
+
+    /// @notice Get core loan data (smaller tuple to avoid large public accessor)
+    function getLoan(uint256 loanId)
+        external
+        view
+        returns (
+            uint256 id,
+            address lender,
+            address borrower,
+            address lendToken,
+            address collateralToken,
+            uint256 principal,
+            uint256 collateralAmount,
+            uint256 lenderPositionTokenId,
+            uint256 borrowerPositionTokenId,
+            bool repaid,
+            bool liquidated
+        )
+    {
+        Loan storage L = loans[loanId];
+        return (
+            L.id,
+            L.lender,
+            L.borrower,
+            L.lendToken,
+            L.collateralToken,
+            L.principal,
+            L.collateralAmount,
+            L.lenderPositionTokenId,
+            L.borrowerPositionTokenId,
+            L.repaid,
+            L.liquidated
+        );
+    }
+
+    // fees and penalty
+    uint256 public ownerFeeBPS;
+    uint256 public penaltyBPS = 200; // default 2%
+    mapping(address => uint256) public ownerFees; // token => amount
+
     event LendingOfferCreated(uint256 indexed id, address indexed lender, address lendToken, uint256 amount);
     event LendingOfferCancelled(uint256 indexed id);
     event BorrowRequestCreated(
@@ -142,5 +203,145 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
         r.active = false;
         _safeTransfer(IERC20(r.collateralToken), msg.sender, r.collateralAmount);
         emit BorrowRequestCancelled(requestId);
+    }
+
+    /// @notice Borrower accepts an existing lender offer. Borrower must provide collateral now.
+    function acceptOfferByBorrower(uint256 offerId, uint256 collateralAmount) external nonReentrant returns (uint256) {
+        Offer storage o = offers[offerId];
+        require(o.active, "offer not active");
+
+        // transfer collateral from borrower
+        _safeTransferFrom(IERC20(o.collateralToken), msg.sender, address(this), collateralAmount);
+
+        // create loan (assign fields individually to avoid stack-too-deep)
+        uint256 loanId = nextLoanId++;
+        loans[loanId].id = loanId;
+        loans[loanId].offerId = offerId;
+        loans[loanId].requestId = 0;
+        loans[loanId].lender = o.lender;
+        loans[loanId].borrower = msg.sender;
+        loans[loanId].lendToken = o.lendToken;
+        loans[loanId].collateralToken = o.collateralToken;
+        loans[loanId].principal = o.amount;
+        loans[loanId].interestRateBPS = o.interestRateBPS;
+        loans[loanId].startTime = block.timestamp;
+        loans[loanId].durationSecs = o.durationSecs;
+        loans[loanId].collateralAmount = collateralAmount;
+        loans[loanId].lenderPositionTokenId = 0;
+        loans[loanId].borrowerPositionTokenId = 0;
+        loans[loanId].repaid = false;
+        loans[loanId].liquidated = false;
+
+        // mark offer inactive
+        o.active = false;
+
+        // transfer principal to borrower from escrowed funds
+        _safeTransfer(IERC20(o.lendToken), msg.sender, o.amount);
+
+        // mint NFTs if set
+        if (address(loanPositionNFT) != address(0)) {
+            _mintPositions(loanId, o.lender, msg.sender);
+        }
+
+        emit LendingOfferCreated(offerId, o.lender, o.lendToken, o.amount);
+        return loanId;
+    }
+
+    /// @notice Lender accepts an existing borrow request by funding principal now.
+    function acceptRequestByLender(uint256 requestId) external nonReentrant returns (uint256) {
+        Request storage r = requests[requestId];
+        require(r.active, "request not active");
+
+        // transfer principal from lender to contract
+        _safeTransferFrom(IERC20(r.borrowToken), msg.sender, address(this), r.amount);
+
+        // create loan (assign fields individually to avoid stack-too-deep)
+        uint256 loanId = nextLoanId++;
+        loans[loanId].id = loanId;
+        loans[loanId].offerId = 0;
+        loans[loanId].requestId = requestId;
+        loans[loanId].lender = msg.sender;
+        loans[loanId].borrower = r.borrower;
+        loans[loanId].lendToken = r.borrowToken;
+        loans[loanId].collateralToken = r.collateralToken;
+        loans[loanId].principal = r.amount;
+        loans[loanId].interestRateBPS = r.maxInterestRateBPS;
+        loans[loanId].startTime = block.timestamp;
+        loans[loanId].durationSecs = r.durationSecs;
+        loans[loanId].collateralAmount = r.collateralAmount;
+        loans[loanId].lenderPositionTokenId = 0;
+        loans[loanId].borrowerPositionTokenId = 0;
+        loans[loanId].repaid = false;
+        loans[loanId].liquidated = false;
+
+        // mark request inactive
+        r.active = false;
+
+        // transfer principal to borrower
+        _safeTransfer(IERC20(r.borrowToken), r.borrower, r.amount);
+
+        // mint NFTs if set
+        if (address(loanPositionNFT) != address(0)) {
+            _mintPositions(loanId, msg.sender, r.borrower);
+        }
+
+        emit BorrowRequestCreated(requestId, r.borrower, r.collateralToken, r.collateralAmount);
+        return loanId;
+    }
+
+    function _mintPositions(uint256 loanId, address lenderAddr, address borrowerAddr) internal {
+        uint256 ltid = loanPositionNFT.mint(lenderAddr, loanId, ILoanPositionNFT.Role.LENDER);
+        uint256 btid = loanPositionNFT.mint(borrowerAddr, loanId, ILoanPositionNFT.Role.BORROWER);
+        loans[loanId].lenderPositionTokenId = ltid;
+        loans[loanId].borrowerPositionTokenId = btid;
+    }
+
+    function _burnPositions(uint256 loanId) internal {
+        uint256 ltid = loans[loanId].lenderPositionTokenId;
+        uint256 btid = loans[loanId].borrowerPositionTokenId;
+        if (ltid != 0) loanPositionNFT.burn(ltid);
+        if (btid != 0) loanPositionNFT.burn(btid);
+    }
+
+    /// @notice Compute linear accrued interest for a loan up to now
+    function accruedInterest(uint256 loanId) public view returns (uint256) {
+        Loan storage L = loans[loanId];
+        if (L.repaid || L.liquidated) return 0;
+        uint256 elapsed = block.timestamp - L.startTime;
+        if (elapsed > L.durationSecs) elapsed = L.durationSecs;
+        // principal * rateBPS * elapsed / (365 days * 10000)
+        return (L.principal * L.interestRateBPS * elapsed) / (365 days * 10000);
+    }
+
+    /// @notice Borrower repays full principal + accrued interest. Burns NFTs on full repay.
+    function repayFull(uint256 loanId) external nonReentrant {
+        Loan storage L = loans[loanId];
+        require(!L.repaid && !L.liquidated, "loan closed");
+        require(msg.sender == L.borrower, "only borrower");
+
+        uint256 interest = accruedInterest(loanId);
+        uint256 ownerFee = (interest * ownerFeeBPS) / 10000;
+        uint256 lenderInterest = interest - ownerFee;
+        uint256 totalDue = L.principal + interest;
+
+        // transfer totalDue from borrower to contract
+        _safeTransferFrom(IERC20(L.lendToken), msg.sender, address(this), totalDue);
+
+        // pay lender principal + interest - ownerFee
+        _safeTransfer(IERC20(L.lendToken), L.lender, L.principal + lenderInterest);
+
+        // accumulate owner fee
+        ownerFees[L.lendToken] += ownerFee;
+
+        // return collateral
+        _safeTransfer(IERC20(L.collateralToken), L.borrower, L.collateralAmount);
+
+        // burn NFTs if present and minter role
+        if (address(loanPositionNFT) != address(0)) {
+            if (L.lenderPositionTokenId != 0) loanPositionNFT.burn(L.lenderPositionTokenId);
+            if (L.borrowerPositionTokenId != 0) loanPositionNFT.burn(L.borrowerPositionTokenId);
+        }
+
+        L.repaid = true;
     }
 }

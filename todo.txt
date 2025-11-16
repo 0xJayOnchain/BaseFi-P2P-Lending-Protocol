@@ -136,6 +136,21 @@ Current TODO checklist
 - [ ] Security hardening, static analysis, and CI
 - [ ] Update README and docs
 
+Recent changes (completed):
+- [x] Implement matching & loan creation: `acceptOfferByBorrower` and `acceptRequestByLender` (creates `Loan` struct, transfers principal, escrows collateral).
+- [x] NFT minting on loan creation via `LoanPositionNFT` (two NFTs minted per loan: lender & borrower). `LoanPositionNFT` uses `MINTER_ROLE` and is permissioned.
+- [x] Repay full implemented (`repayFull`) with linear interest calculation, owner fee accounting (ownerFeeBPS), returning collateral, and burning position NFTs on full repayment.
+
+Next immediate tasks:
+- [ ] Add admin setters: `setOwnerFeeBPS`, `setPenaltyBPS` and `claimOwnerFees(token)` to allow owner to withdraw accumulated fees.
+- [ ] Implement `liquidate(loanId)` allowing lender or lender-NFT holder to liquidate after expiry and apply `penaltyBPS` to principal; transfer collateral to liquidator.
+- [ ] Add tests for `acceptRequestByLender`, `liquidate` scenarios, and NFT transfer behavior (secondary market flows).
+- [ ] Add documentation and examples in README for the new loan/NFT flows.
+
+Notes:
+- `loans` storage accessor was made private and a compact `getLoan` getter was added to avoid large public accessor stack issues during compilation.
+- All tests pass locally (`forge test`): PriceOracle, PoolAdapter, LendingPool offer/request flows, and Matching/repay flow.
+
 How to run tests locally.
 
 Navigate to Project
