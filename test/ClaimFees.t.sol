@@ -19,7 +19,7 @@ contract ClaimFeesTest is Test {
         lendToken = new MockERC20("Lend", "LND", 18);
         collateralToken = new MockERC20("Coll", "COL", 18);
 
-    pool = new LendingPool(address(this));
+        pool = new LendingPool(address(this));
 
         nft = new LoanPositionNFT("LoanPos", "LPOS");
         bytes32 MINTER = keccak256("MINTER_ROLE");
@@ -37,7 +37,8 @@ contract ClaimFeesTest is Test {
         // lender creates offer
         vm.startPrank(lender);
         lendToken.approve(address(pool), 100 ether);
-        uint256 offerId = pool.createLendingOffer(address(lendToken), 100 ether, 1000, 90 days, address(collateralToken), 15000);
+        uint256 offerId =
+            pool.createLendingOffer(address(lendToken), 100 ether, 1000, 90 days, address(collateralToken), 15000);
         vm.stopPrank();
 
         // borrower accepts
@@ -56,20 +57,20 @@ contract ClaimFeesTest is Test {
 
         pool.repayFull(loanId);
 
-    // ownerFees for lendToken should be > 0
-    uint256 f = pool.ownerFees(address(lendToken));
-    assertGt(f, 0);
+        // ownerFees for lendToken should be > 0
+        uint256 f = pool.ownerFees(address(lendToken));
+        assertGt(f, 0);
 
-    // stop being borrower and claim fees as owner (this contract)
-    vm.stopPrank();
+        // stop being borrower and claim fees as owner (this contract)
+        vm.stopPrank();
 
-    uint256 balBefore = lendToken.balanceOf(address(this));
-    pool.claimOwnerFees(address(lendToken));
-    uint256 balAfter = lendToken.balanceOf(address(this));
-    assertEq(balAfter - balBefore, f);
+        uint256 balBefore = lendToken.balanceOf(address(this));
+        pool.claimOwnerFees(address(lendToken));
+        uint256 balAfter = lendToken.balanceOf(address(this));
+        assertEq(balAfter - balBefore, f);
 
-    // ownerFees should be zeroed
-    assertEq(pool.ownerFees(address(lendToken)), 0);
+        // ownerFees should be zeroed
+        assertEq(pool.ownerFees(address(lendToken)), 0);
     }
 
     function testClaimFeesMultipleTokens() public {
@@ -83,7 +84,8 @@ contract ClaimFeesTest is Test {
         // --- Loan 1 with lendToken (existing lendToken from setUp)
         vm.startPrank(lender);
         lendToken.approve(address(pool), 100 ether);
-        uint256 offer1 = pool.createLendingOffer(address(lendToken), 100 ether, 1000, 90 days, address(collateralToken), 15000);
+        uint256 offer1 =
+            pool.createLendingOffer(address(lendToken), 100 ether, 1000, 90 days, address(collateralToken), 15000);
         vm.stopPrank();
 
         vm.startPrank(borrower);
@@ -102,7 +104,8 @@ contract ClaimFeesTest is Test {
         // --- Loan 2 with lendToken2
         vm.startPrank(lender);
         lendToken2.approve(address(pool), 200 ether);
-        uint256 offer2 = pool.createLendingOffer(address(lendToken2), 200 ether, 2000, 90 days, address(collateralToken), 15000);
+        uint256 offer2 =
+            pool.createLendingOffer(address(lendToken2), 200 ether, 2000, 90 days, address(collateralToken), 15000);
         vm.stopPrank();
 
         vm.startPrank(borrower);
