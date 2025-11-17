@@ -1,0 +1,42 @@
+```plaintext
+Handoff Summary — BaseFi P2P Lending Protocol (up-to-date)
+
+Project purpose and current baseline
+
+Purpose: A true peer-to-peer (P2P) lending protocol where lenders and borrowers create offers and requests that are matched directly; no pooled lending. Each loan is an atomic match between a lender and a borrower.
+Current repo state (progress): Minimal proof-of-concept present and extended with initial utilities and escrow flows.
+Todo — BaseFi P2P Lending Protocol (current)
+
+Completed
+- Confirmed design decisions for v1 (full-fill-only, NFTs transfer rights, penalty on principal only, owner fee on interest only).
+- Implemented SafeERC20 helpers (`BaseP2P.sol`), `PriceOracle.sol` + `MockAggregator`, and `MockERC20` for tests.
+- Offer / Request escrow flows implemented in `LendingPool.sol` and tested (`createLendingOffer`, `createBorrowRequest`, cancel flows).
+- `LoanPositionNFT.sol` implemented (ERC721 with `MINTER_ROLE`) and pool integration added.
+- Matching & loan lifecycle: `acceptOfferByBorrower` and `acceptRequestByLender` implemented, NFT minting on loan creation, `repayFull` with owner fee accounting and NFT burn on full repay.
+- Owner fee claim tests (single & multi-token) added and passing (`test/ClaimFees.t.sol`).
+
+In progress / Next
+- Implement `liquidate(loanId)` for expiry / undercollateralized loans and add tests (priority).
+- Add more edge-case tests: non-standard ERC20s, varying decimals, token contracts that don't return bool on transfer.
+- Add CI and static analysis (Slither, solhint) in GitHub Actions.
+
+Nice-to-have
+- Add `claimOwnerFeesBatch(address[] tokens)` helper to allow owner to claim multiple tokens in one tx (gas & reentrancy considerations).
+- Add example scripts for creating offers/requests via Foundry scripts or a small JS/TS script.
+
+How to run tests
+- From repo root:
+  - `forge test -vv`
+  - `forge build`
+
+Location of important files
+- `src/LendingPool.sol` — core protocol logic (offers/requests/loans, escrow, matching, fees)
+- `src/LoanPositionNFT.sol` — ERC-721 representing positions; controlled mint/burn via `MINTER_ROLE`
+- `src/PriceOracle.sol` & `src/mocks/MockAggregator.sol` — price feeds used for valuations
+- `src/mocks/MockERC20.sol` — test ERC20
+- `test/` — Foundry tests (see files mentioned in README)
+
+Notes for maintainers
+- Watch for `stack-too-deep` in complex functions; split assignments and extract helpers when necessary.
+- When adding contracts that inherit OpenZeppelin's `Ownable`, remember some constructors require parameters; pass `msg.sender` or owner address where appropriate.
+- NFT `supportsInterface` needs explicit overrides when combining `ERC721` and `AccessControl`.
