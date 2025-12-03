@@ -34,6 +34,9 @@ contract OwnerSweepSwapTest is Test {
 
         router = new MockUniswapV2Router();
 
+    // whitelist the router for swaps
+    pool.setRouterWhitelisted(address(router), true);
+
         // fund lender and borrower
         lendToken.mint(lender, 1000 ether);
         collateralToken.mint(borrower, 2000 ether);
