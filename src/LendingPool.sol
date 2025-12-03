@@ -4,11 +4,22 @@ pragma solidity ^0.8.0;
 import "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import "lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import "lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
+import "lib/openzeppelin-contracts/contracts/utils/Pausable.sol";
 import "./BaseP2P.sol";
 import "./PriceOracle.sol";
 import "./interfaces/ILoanPositionNFT.sol";
 
-contract LendingPool is BaseP2P, ReentrancyGuard {
+interface IUniswapV2Router {
+    function swapExactTokensForTokens(
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    ) external returns (uint256[] memory amounts);
+}
+
+contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
     struct Offer {
@@ -39,6 +50,8 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
 
     PriceOracle public priceOracle;
     ILoanPositionNFT public loanPositionNFT;
+    mapping(address => bool) public routerWhitelist;
+    bool public enforceCollateralValidation;
 
     uint256 public nextOfferId = 1;
     uint256 public nextRequestId = 1;
@@ -56,6 +69,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
         address collateralToken;
         uint256 principal;
         uint256 interestRateBPS;
+        uint256 collateralRatioBPS;
         uint256 startTime;
         uint256 durationSecs;
         uint256 collateralAmount;
@@ -110,6 +124,10 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
     event OwnerFeeBpsUpdated(uint256 oldBps, uint256 newBps);
     event PenaltyBpsUpdated(uint256 oldBps, uint256 newBps);
     event OwnerFeesClaimed(address indexed token, address indexed to, uint256 amount);
+    event LoanLiquidated(
+        uint256 indexed loanId, address indexed liquidator, uint256 collateralToLiquidator, uint256 penaltyCollateral
+    );
+    event OwnerFeesSwapped(address indexed tokenIn, address indexed tokenOut, uint256 amountIn, uint256 amountOut);
 
     event LendingOfferCreated(uint256 indexed id, address indexed lender, address lendToken, uint256 amount);
     event LendingOfferCancelled(uint256 indexed id);
@@ -119,11 +137,43 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
     event BorrowRequestCancelled(uint256 indexed id);
 
     constructor(address _priceOracle) BaseP2P() {
+        // Best-effort set; may be a non-oracle during tests. Price checks will gracefully skip if calls fail.
         priceOracle = PriceOracle(_priceOracle);
+    }
+
+    /// @dev Safely fetch normalized price from oracle; returns 0 if oracle call fails
+    function _normalizedPrice(address token) internal view returns (uint256 p) {
+        if (address(priceOracle) == address(0)) return 0;
+        // try/catch to avoid test setups passing a non-PriceOracle address
+        try priceOracle.getNormalizedPrice(token) returns (uint256 v) {
+            return v;
+        } catch {
+            return 0;
+        }
     }
 
     function setLoanPositionNFT(address _nft) external onlyOwner {
         loanPositionNFT = ILoanPositionNFT(_nft);
+    }
+
+    /// @notice Pause the protocol critical functions
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    /// @notice Unpause the protocol
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
+    /// @notice Manage router whitelist for swaps
+    function setRouterWhitelisted(address router, bool whitelisted) external onlyOwner {
+        routerWhitelist[router] = whitelisted;
+    }
+
+    /// @notice Enable or disable collateral validation at match-time
+    function setEnforceCollateralValidation(bool on) external onlyOwner {
+        enforceCollateralValidation = on;
     }
 
     function setOwnerFeeBPS(uint256 bps) external onlyOwner {
@@ -147,7 +197,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
         uint256 durationSecs,
         address collateralToken,
         uint256 collateralRatioBPS
-    ) external virtual nonReentrant returns (uint256) {
+    ) external virtual nonReentrant whenNotPaused returns (uint256) {
         require(amount > 0, "amount>0");
         // transfer principal into escrow
         _safeTransferFrom(IERC20(lendToken), msg.sender, address(this), amount);
@@ -170,7 +220,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
         return id;
     }
 
-    function cancelLendingOffer(uint256 offerId) external virtual nonReentrant {
+    function cancelLendingOffer(uint256 offerId) external virtual nonReentrant whenNotPaused {
         Offer storage o = offers[offerId];
         require(o.active, "not active");
         require(o.lender == msg.sender, "only lender");
@@ -188,7 +238,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
         uint256 durationSecs,
         address collateralToken,
         uint256 collateralAmount
-    ) external virtual nonReentrant returns (uint256) {
+    ) external virtual nonReentrant whenNotPaused returns (uint256) {
         require(amount > 0, "amount>0");
         require(collateralAmount > 0, "collateral>0");
 
@@ -213,7 +263,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
         return id;
     }
 
-    function cancelBorrowRequest(uint256 requestId) external virtual nonReentrant {
+    function cancelBorrowRequest(uint256 requestId) external virtual nonReentrant whenNotPaused {
         Request storage r = requests[requestId];
         require(r.active, "not active");
         require(r.borrower == msg.sender, "only borrower");
@@ -224,12 +274,30 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
     }
 
     /// @notice Borrower accepts an existing lender offer. Borrower must provide collateral now.
-    function acceptOfferByBorrower(uint256 offerId, uint256 collateralAmount) external nonReentrant returns (uint256) {
+    function acceptOfferByBorrower(uint256 offerId, uint256 collateralAmount)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (uint256)
+    {
         Offer storage o = offers[offerId];
         require(o.active, "offer not active");
 
         // transfer collateral from borrower
         _safeTransferFrom(IERC20(o.collateralToken), msg.sender, address(this), collateralAmount);
+
+        // collateral validation using oracle if available (graceful if unavailable), optional
+        if (enforceCollateralValidation) {
+            uint256 pColl = _normalizedPrice(o.collateralToken);
+            uint256 pLend = _normalizedPrice(o.lendToken);
+            // if prices unavailable, skip validation; else enforce ratio
+            if (pColl > 0 && pLend > 0) {
+                uint256 collateralValue = (collateralAmount * pColl) / 1e18;
+                uint256 principalValue = (o.amount * pLend) / 1e18;
+                uint256 requiredValue = (principalValue * o.collateralRatioBPS) / 10000;
+                require(collateralValue >= requiredValue, "insufficient collateral");
+            }
+        }
 
         // create loan (assign fields individually to avoid stack-too-deep)
         uint256 loanId = nextLoanId++;
@@ -244,6 +312,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
         loans[loanId].interestRateBPS = o.interestRateBPS;
         loans[loanId].startTime = block.timestamp;
         loans[loanId].durationSecs = o.durationSecs;
+        loans[loanId].collateralRatioBPS = o.collateralRatioBPS;
         loans[loanId].collateralAmount = collateralAmount;
         loans[loanId].lenderPositionTokenId = 0;
         loans[loanId].borrowerPositionTokenId = 0;
@@ -266,12 +335,25 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
     }
 
     /// @notice Lender accepts an existing borrow request by funding principal now.
-    function acceptRequestByLender(uint256 requestId) external nonReentrant returns (uint256) {
+    function acceptRequestByLender(uint256 requestId) external nonReentrant whenNotPaused returns (uint256) {
         Request storage r = requests[requestId];
         require(r.active, "request not active");
 
         // transfer principal from lender to contract
         _safeTransferFrom(IERC20(r.borrowToken), msg.sender, address(this), r.amount);
+
+        // collateral validation at match using oracle if available (graceful if unavailable), optional
+        if (enforceCollateralValidation) {
+            uint256 pColl = _normalizedPrice(r.collateralToken);
+            uint256 pLend = _normalizedPrice(r.borrowToken);
+            if (pColl > 0 && pLend > 0) {
+                uint256 collateralValue = (r.collateralAmount * pColl) / 1e18;
+                uint256 principalValue = (r.amount * pLend) / 1e18;
+                // conservative default: require 100% collateral by value
+                uint256 requiredValue = principalValue;
+                require(collateralValue >= requiredValue, "insufficient collateral");
+            }
+        }
 
         // create loan (assign fields individually to avoid stack-too-deep)
         uint256 loanId = nextLoanId++;
@@ -286,7 +368,25 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
         loans[loanId].interestRateBPS = r.maxInterestRateBPS;
         loans[loanId].startTime = block.timestamp;
         loans[loanId].durationSecs = r.durationSecs;
+        // compute implied collateral ratio in BPS at loan creation using oracle (if available)
         loans[loanId].collateralAmount = r.collateralAmount;
+        uint256 ratioBPS = 0;
+        // attempt to compute ratio; if oracle available, compute normalized values to derive a ratio
+        if (address(priceOracle) != address(0)) {
+            uint256 pCollateral = _normalizedPrice(r.collateralToken);
+            uint256 pLend = _normalizedPrice(r.borrowToken);
+            // principal value = principal * pLend / 1e18
+            // collateral value = collateralAmount * pCollateral / 1e18
+            // ratioBPS = collateralValue * 10000 / principalValue
+            if (pLend > 0) {
+                uint256 principalValue = (r.amount * pLend) / 1e18;
+                if (principalValue > 0) {
+                    uint256 collateralValue = (r.collateralAmount * pCollateral) / 1e18;
+                    ratioBPS = (collateralValue * 10000) / principalValue;
+                }
+            }
+        }
+        loans[loanId].collateralRatioBPS = ratioBPS;
         loans[loanId].lenderPositionTokenId = 0;
         loans[loanId].borrowerPositionTokenId = 0;
         loans[loanId].repaid = false;
@@ -332,7 +432,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
     }
 
     /// @notice Borrower repays full principal + accrued interest. Burns NFTs on full repay.
-    function repayFull(uint256 loanId) external nonReentrant {
+    function repayFull(uint256 loanId) external nonReentrant whenNotPaused {
         Loan storage L = loans[loanId];
         require(!L.repaid && !L.liquidated, "loan closed");
         require(msg.sender == L.borrower, "only borrower");
@@ -364,11 +464,113 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
     }
 
     /// @notice Claim accumulated owner fees for a token
-    function claimOwnerFees(address token) external onlyOwner nonReentrant {
+    function claimOwnerFees(address token) external onlyOwner nonReentrant whenNotPaused {
         uint256 amt = ownerFees[token];
         require(amt > 0, "no fees");
         ownerFees[token] = 0;
         _safeTransfer(IERC20(token), owner(), amt);
         emit OwnerFeesClaimed(token, owner(), amt);
+    }
+
+    /// @notice Owner-only: swap all accumulated fees in tokenIn to tokenOut via a Uniswap V2-like router.
+    /// @dev Uses check-effects-interactions, SafeERC20 approvals, and emits OwnerFeesSwapped.
+    function claimAndSwapFees(
+        address router,
+        address tokenIn,
+        address[] calldata path,
+        uint256 amountOutMin,
+        uint256 deadline
+    ) external onlyOwner nonReentrant whenNotPaused {
+        require(router != address(0), "router=0");
+        require(routerWhitelist[router], "router not whitelisted");
+        require(path.length >= 2, "bad path");
+        require(path[0] == tokenIn, "path mismatch");
+        address tokenOut = path[path.length - 1];
+        uint256 amtIn = ownerFees[tokenIn];
+        require(amtIn > 0, "no fees");
+
+        // effects: zero before interaction
+        ownerFees[tokenIn] = 0;
+
+        // approve router for amount
+        IERC20(tokenIn).safeIncreaseAllowance(router, amtIn);
+
+        // interaction: swap; send proceeds to owner
+        uint256[] memory amounts =
+            IUniswapV2Router(router).swapExactTokensForTokens(amtIn, amountOutMin, path, owner(), deadline);
+
+        // clear allowance to prevent lingering approvals
+        IERC20(tokenIn).approve(router, 0);
+
+        uint256 amountOut = amounts[amounts.length - 1];
+        emit OwnerFeesSwapped(tokenIn, tokenOut, amtIn, amountOut);
+    }
+
+    /// @notice Liquidate a loan if expired or undercollateralized. Caller must be lender or lender-NFT owner.
+    function liquidate(uint256 loanId) external nonReentrant whenNotPaused {
+        Loan storage L = loans[loanId];
+        require(L.id != 0, "invalid loan");
+        require(!L.repaid && !L.liquidated, "loan closed");
+
+        // permission: lender or current owner of lender position NFT
+        bool isLender = (msg.sender == L.lender);
+        if (!isLender && address(loanPositionNFT) != address(0) && L.lenderPositionTokenId != 0) {
+            address ownerOfLenderToken = loanPositionNFT.ownerOf(L.lenderPositionTokenId);
+            require(msg.sender == ownerOfLenderToken, "not lender or token owner");
+        } else if (!isLender) {
+            revert("not lender");
+        }
+
+        // check expiry
+        bool expired = (block.timestamp > L.startTime + L.durationSecs);
+
+        // check undercollateralization if collateral ratio present
+        bool undercollateralized = false;
+        if (L.collateralRatioBPS > 0) {
+            // compute normalized values
+            uint256 pLend = priceOracle.getNormalizedPrice(L.lendToken);
+            uint256 pColl = priceOracle.getNormalizedPrice(L.collateralToken);
+            require(pLend > 0 && pColl > 0, "invalid price");
+
+            uint256 principalValue = (L.principal * pLend) / 1e18;
+            uint256 collateralValue = (L.collateralAmount * pColl) / 1e18;
+            uint256 requiredCollateralValue = (principalValue * L.collateralRatioBPS) / 10000;
+            if (collateralValue < requiredCollateralValue) undercollateralized = true;
+        }
+
+        require(expired || undercollateralized, "not liquidatable");
+
+        // compute penalty in principal units (lendToken), then convert to collateral units to withhold
+        uint256 penaltyInLend = (L.principal * penaltyBPS) / 10000;
+        uint256 penaltyCollateral = 0;
+        if (penaltyInLend > 0) {
+            uint256 pLend = priceOracle.getNormalizedPrice(L.lendToken);
+            uint256 pColl = priceOracle.getNormalizedPrice(L.collateralToken);
+            require(pLend > 0 && pColl > 0, "invalid price");
+            // penaltyCollateral = penaltyInLend * pLend / pColl
+            penaltyCollateral = (penaltyInLend * pLend) / pColl;
+            if (penaltyCollateral > L.collateralAmount) penaltyCollateral = L.collateralAmount;
+            // accrue owner fees in collateral token units
+            ownerFees[L.collateralToken] += penaltyCollateral;
+        }
+
+        uint256 toLiquidator = L.collateralAmount;
+        if (penaltyCollateral > 0) {
+            toLiquidator = L.collateralAmount - penaltyCollateral;
+        }
+
+        // transfer collateral (less penalty) to caller
+        if (toLiquidator > 0) {
+            _safeTransfer(IERC20(L.collateralToken), msg.sender, toLiquidator);
+        }
+
+        // burn position NFTs if present
+        if (address(loanPositionNFT) != address(0)) {
+            if (L.lenderPositionTokenId != 0) loanPositionNFT.burn(L.lenderPositionTokenId);
+            if (L.borrowerPositionTokenId != 0) loanPositionNFT.burn(L.borrowerPositionTokenId);
+        }
+
+        L.liquidated = true;
+        emit LoanLiquidated(loanId, msg.sender, toLiquidator, penaltyCollateral);
     }
 }

@@ -4,25 +4,32 @@ Handoff Summary — BaseFi P2P Lending Protocol (up-to-date)
 Project purpose and current baseline
 
 Purpose: A true peer-to-peer (P2P) lending protocol where lenders and borrowers create offers and requests that are matched directly; no pooled lending. Each loan is an atomic match between a lender and a borrower.
-Current repo state (progress): Minimal proof-of-concept present and extended with initial utilities and escrow flows.
+Current repo state (progress): Core protocol implemented with Round 1 safety features and comprehensive tests passing.
 Todo — BaseFi P2P Lending Protocol (current)
 
-Completed
+Completed (Round 1)
 - Confirmed design decisions for v1 (full-fill-only, NFTs transfer rights, penalty on principal only, owner fee on interest only).
 - Implemented SafeERC20 helpers (`BaseP2P.sol`), `PriceOracle.sol` + `MockAggregator`, and `MockERC20` for tests.
 - Offer / Request escrow flows implemented in `LendingPool.sol` and tested (`createLendingOffer`, `createBorrowRequest`, cancel flows).
 - `LoanPositionNFT.sol` implemented (ERC721 with `MINTER_ROLE`) and pool integration added.
 - Matching & loan lifecycle: `acceptOfferByBorrower` and `acceptRequestByLender` implemented, NFT minting on loan creation, `repayFull` with owner fee accounting and NFT burn on full repay.
 - Owner fee claim tests (single & multi-token) added and passing (`test/ClaimFees.t.sol`).
+ - Owner sweep-and-swap function added (`claimAndSwapFees`) with Uniswap V2-style path; mock router + tests passing (`test/OwnerSweepSwap.t.sol`).
+ - Liquidation: expiry and undercollateralization checks via oracle, penalty to owner fees (collateral), transfers and NFT burns.
+ - Safety features: `Pausable` guards on core flows, router whitelist enforcement, opt-in collateral validation using oracle, and oracle staleness guard (`maxPriceAge`).
+ - Tests: coverage for paused behavior (incl. cancel), router whitelist, collateral validation, liquidation, owner sweep-and-swap, and staleness guard.
 
-In progress / Next
-- Implement `liquidate(loanId)` for expiry / undercollateralized loans and add tests (priority).
-- Add more edge-case tests: non-standard ERC20s, varying decimals, token contracts that don't return bool on transfer.
-- Add CI and static analysis (Slither, solhint) in GitHub Actions.
+In progress / Next (Round 2)
+- Eventing: emit events for pause/unpause, router whitelist changes, collateral validation toggles, oracle feed updates; ensure indexed params for analytics.
+- Edge-case tests: fee-on-transfer tokens, unusual decimals, non-standard ERC20 behaviors (no return bool).
+- CI and static analysis: Slither, solhint, Foundry profile matrix; gas snapshots.
+- Optional user-opt-in repay/liquidate with conversion: slippage controls, router whitelist, price sanity checks.
+- Documentation: expand README usage examples and add Foundry scripts.
 
 Nice-to-have
 - Add `claimOwnerFeesBatch(address[] tokens)` helper to allow owner to claim multiple tokens in one tx (gas & reentrancy considerations).
 - Add example scripts for creating offers/requests via Foundry scripts or a small JS/TS script.
+ - Router whitelist & pausability: restrict swap routers and add pause guard for conversion functions.
 
 How to run tests
 - From repo root:

@@ -48,4 +48,9 @@ contract LoanPositionNFT is ERC721, AccessControl, ILoanPositionNFT {
     function roleOfToken(uint256 tokenId) external view override returns (Role) {
         return _roleOf[tokenId];
     }
+
+    // Expose ownerOf through the interface and resolve multiple inheritance
+    function ownerOf(uint256 tokenId) public view override(ERC721, ILoanPositionNFT) returns (address) {
+        return ERC721.ownerOf(tokenId);
+    }
 }
