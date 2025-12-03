@@ -7,6 +7,15 @@ import "lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
 import "./BaseP2P.sol";
 import "./PriceOracle.sol";
 import "./interfaces/ILoanPositionNFT.sol";
+interface IUniswapV2Router {
+    function swapExactTokensForTokens(
+        uint amountIn,
+        uint amountOutMin,
+        address[] calldata path,
+        address to,
+        uint deadline
+    ) external returns (uint[] memory amounts);
+}
 
 contract LendingPool is BaseP2P, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -112,6 +121,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
     event PenaltyBpsUpdated(uint256 oldBps, uint256 newBps);
     event OwnerFeesClaimed(address indexed token, address indexed to, uint256 amount);
     event LoanLiquidated(uint256 indexed loanId, address indexed liquidator, uint256 collateralToLiquidator, uint256 penaltyCollateral);
+    event OwnerFeesSwapped(address indexed tokenIn, address indexed tokenOut, uint256 amountIn, uint256 amountOut);
 
     event LendingOfferCreated(uint256 indexed id, address indexed lender, address lendToken, uint256 amount);
     event LendingOfferCancelled(uint256 indexed id);
@@ -391,6 +401,44 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
         ownerFees[token] = 0;
         _safeTransfer(IERC20(token), owner(), amt);
         emit OwnerFeesClaimed(token, owner(), amt);
+    }
+
+    /// @notice Owner-only: swap all accumulated fees in tokenIn to tokenOut via a Uniswap V2-like router.
+    /// @dev Uses check-effects-interactions, SafeERC20 approvals, and emits OwnerFeesSwapped.
+    function claimAndSwapFees(
+        address router,
+        address tokenIn,
+        address[] calldata path,
+        uint256 amountOutMin,
+        uint256 deadline
+    ) external onlyOwner nonReentrant {
+        require(router != address(0), "router=0");
+        require(path.length >= 2, "bad path");
+        require(path[0] == tokenIn, "path mismatch");
+        address tokenOut = path[path.length - 1];
+        uint256 amtIn = ownerFees[tokenIn];
+        require(amtIn > 0, "no fees");
+
+        // effects: zero before interaction
+        ownerFees[tokenIn] = 0;
+
+        // approve router for amount
+        IERC20(tokenIn).safeIncreaseAllowance(router, amtIn);
+
+        // interaction: swap; send proceeds to owner
+        uint[] memory amounts = IUniswapV2Router(router).swapExactTokensForTokens(
+            amtIn,
+            amountOutMin,
+            path,
+            owner(),
+            deadline
+        );
+
+    // clear allowance to prevent lingering approvals
+    IERC20(tokenIn).approve(router, 0);
+
+        uint256 amountOut = amounts[amounts.length - 1];
+        emit OwnerFeesSwapped(tokenIn, tokenOut, amtIn, amountOut);
     }
 
     /// @notice Liquidate a loan if expired or undercollateralized. Caller must be lender or lender-NFT owner.
