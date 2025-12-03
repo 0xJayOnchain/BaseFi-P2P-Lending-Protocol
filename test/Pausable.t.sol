@@ -58,7 +58,8 @@ contract PausableTest is Test {
         pool.unpause();
         vm.startPrank(lender);
         lendToken.approve(address(pool), 100 ether);
-        uint256 offerId = pool.createLendingOffer(address(lendToken), 100 ether, 1000, 90 days, address(collateralToken), 15000);
+        uint256 offerId =
+            pool.createLendingOffer(address(lendToken), 100 ether, 1000, 90 days, address(collateralToken), 15000);
         vm.stopPrank();
         pool.pause();
 
@@ -74,7 +75,8 @@ contract PausableTest is Test {
         pool.unpause();
         vm.startPrank(lender);
         lendToken.approve(address(pool), 100 ether);
-        uint256 offerId = pool.createLendingOffer(address(lendToken), 100 ether, 1000, 30 days, address(collateralToken), 15000);
+        uint256 offerId =
+            pool.createLendingOffer(address(lendToken), 100 ether, 1000, 30 days, address(collateralToken), 15000);
         vm.stopPrank();
 
         vm.startPrank(borrower);
@@ -109,5 +111,34 @@ contract PausableTest is Test {
         path[1] = address(collateralToken);
         vm.expectRevert();
         pool.claimAndSwapFees(address(router), address(lendToken), path, 0, block.timestamp + 1);
+    }
+
+    function testPausedBlocksCancelOfferAndRequest() public {
+        // unpause to create offer & request
+        pool.unpause();
+        vm.startPrank(lender);
+        lendToken.approve(address(pool), 50 ether);
+        uint256 offerId =
+            pool.createLendingOffer(address(lendToken), 50 ether, 600, 15 days, address(collateralToken), 15000);
+        vm.stopPrank();
+
+        vm.startPrank(borrower);
+        collateralToken.approve(address(pool), 80 ether);
+        uint256 reqId =
+            pool.createBorrowRequest(address(lendToken), 20 ether, 800, 15 days, address(collateralToken), 80 ether);
+        vm.stopPrank();
+
+        // pause and expect cancel reverts
+        pool.pause();
+
+        vm.startPrank(lender);
+        vm.expectRevert();
+        pool.cancelLendingOffer(offerId);
+        vm.stopPrank();
+
+        vm.startPrank(borrower);
+        vm.expectRevert();
+        pool.cancelBorrowRequest(reqId);
+        vm.stopPrank();
     }
 }

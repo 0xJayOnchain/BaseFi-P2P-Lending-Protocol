@@ -8,14 +8,15 @@ import "lib/openzeppelin-contracts/contracts/utils/Pausable.sol";
 import "./BaseP2P.sol";
 import "./PriceOracle.sol";
 import "./interfaces/ILoanPositionNFT.sol";
+
 interface IUniswapV2Router {
     function swapExactTokensForTokens(
-        uint amountIn,
-        uint amountOutMin,
+        uint256 amountIn,
+        uint256 amountOutMin,
         address[] calldata path,
         address to,
-        uint deadline
-    ) external returns (uint[] memory amounts);
+        uint256 deadline
+    ) external returns (uint256[] memory amounts);
 }
 
 contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
@@ -123,7 +124,9 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     event OwnerFeeBpsUpdated(uint256 oldBps, uint256 newBps);
     event PenaltyBpsUpdated(uint256 oldBps, uint256 newBps);
     event OwnerFeesClaimed(address indexed token, address indexed to, uint256 amount);
-    event LoanLiquidated(uint256 indexed loanId, address indexed liquidator, uint256 collateralToLiquidator, uint256 penaltyCollateral);
+    event LoanLiquidated(
+        uint256 indexed loanId, address indexed liquidator, uint256 collateralToLiquidator, uint256 penaltyCollateral
+    );
     event OwnerFeesSwapped(address indexed tokenIn, address indexed tokenOut, uint256 amountIn, uint256 amountOut);
 
     event LendingOfferCreated(uint256 indexed id, address indexed lender, address lendToken, uint256 amount);
@@ -154,10 +157,14 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     }
 
     /// @notice Pause the protocol critical functions
-    function pause() external onlyOwner { _pause(); }
+    function pause() external onlyOwner {
+        _pause();
+    }
 
     /// @notice Unpause the protocol
-    function unpause() external onlyOwner { _unpause(); }
+    function unpause() external onlyOwner {
+        _unpause();
+    }
 
     /// @notice Manage router whitelist for swaps
     function setRouterWhitelisted(address router, bool whitelisted) external onlyOwner {
@@ -267,7 +274,12 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     }
 
     /// @notice Borrower accepts an existing lender offer. Borrower must provide collateral now.
-    function acceptOfferByBorrower(uint256 offerId, uint256 collateralAmount) external nonReentrant whenNotPaused returns (uint256) {
+    function acceptOfferByBorrower(uint256 offerId, uint256 collateralAmount)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (uint256)
+    {
         Offer storage o = offers[offerId];
         require(o.active, "offer not active");
 
@@ -280,9 +292,9 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
             uint256 pLend = _normalizedPrice(o.lendToken);
             // if prices unavailable, skip validation; else enforce ratio
             if (pColl > 0 && pLend > 0) {
-            uint256 collateralValue = (collateralAmount * pColl) / 1e18;
-            uint256 principalValue = (o.amount * pLend) / 1e18;
-            uint256 requiredValue = (principalValue * o.collateralRatioBPS) / 10000;
+                uint256 collateralValue = (collateralAmount * pColl) / 1e18;
+                uint256 principalValue = (o.amount * pLend) / 1e18;
+                uint256 requiredValue = (principalValue * o.collateralRatioBPS) / 10000;
                 require(collateralValue >= requiredValue, "insufficient collateral");
             }
         }
@@ -300,7 +312,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         loans[loanId].interestRateBPS = o.interestRateBPS;
         loans[loanId].startTime = block.timestamp;
         loans[loanId].durationSecs = o.durationSecs;
-    loans[loanId].collateralRatioBPS = o.collateralRatioBPS;
+        loans[loanId].collateralRatioBPS = o.collateralRatioBPS;
         loans[loanId].collateralAmount = collateralAmount;
         loans[loanId].lenderPositionTokenId = 0;
         loans[loanId].borrowerPositionTokenId = 0;
@@ -484,16 +496,11 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         IERC20(tokenIn).safeIncreaseAllowance(router, amtIn);
 
         // interaction: swap; send proceeds to owner
-        uint[] memory amounts = IUniswapV2Router(router).swapExactTokensForTokens(
-            amtIn,
-            amountOutMin,
-            path,
-            owner(),
-            deadline
-        );
+        uint256[] memory amounts =
+            IUniswapV2Router(router).swapExactTokensForTokens(amtIn, amountOutMin, path, owner(), deadline);
 
-    // clear allowance to prevent lingering approvals
-    IERC20(tokenIn).approve(router, 0);
+        // clear allowance to prevent lingering approvals
+        IERC20(tokenIn).approve(router, 0);
 
         uint256 amountOut = amounts[amounts.length - 1];
         emit OwnerFeesSwapped(tokenIn, tokenOut, amtIn, amountOut);

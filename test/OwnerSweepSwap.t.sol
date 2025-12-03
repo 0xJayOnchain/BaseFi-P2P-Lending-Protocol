@@ -34,8 +34,8 @@ contract OwnerSweepSwapTest is Test {
 
         router = new MockUniswapV2Router();
 
-    // whitelist the router for swaps
-    pool.setRouterWhitelisted(address(router), true);
+        // whitelist the router for swaps
+        pool.setRouterWhitelisted(address(router), true);
 
         // fund lender and borrower
         lendToken.mint(lender, 1000 ether);
@@ -49,7 +49,8 @@ contract OwnerSweepSwapTest is Test {
         // lender creates offer
         vm.startPrank(lender);
         lendToken.approve(address(pool), 100 ether);
-        uint256 offerId = pool.createLendingOffer(address(lendToken), 100 ether, 1000, 90 days, address(collateralToken), 15000);
+        uint256 offerId =
+            pool.createLendingOffer(address(lendToken), 100 ether, 1000, 90 days, address(collateralToken), 15000);
         vm.stopPrank();
 
         // borrower accepts

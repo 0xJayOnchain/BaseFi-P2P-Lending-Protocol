@@ -9,12 +9,12 @@ contract MockUniswapV2Router {
 
     // swapExactTokensForTokens: transfers amountIn of tokenIn from msg.sender, then sends amountOutMin of tokenOut to 'to'.
     function swapExactTokensForTokens(
-        uint amountIn,
-        uint amountOutMin,
+        uint256 amountIn,
+        uint256 amountOutMin,
         address[] calldata path,
         address to,
-        uint deadline
-    ) external returns (uint[] memory amounts) {
+        uint256 deadline
+    ) external returns (uint256[] memory amounts) {
         require(block.timestamp <= deadline, "deadline");
         require(path.length >= 2, "bad path");
         address tokenIn = path[0];
@@ -26,7 +26,7 @@ contract MockUniswapV2Router {
         // send tokenOut from router to recipient; router must be pre-funded in tests
         IERC20(tokenOut).safeTransfer(to, amountOutMin);
 
-        amounts = new uint[](path.length);
+        amounts = new uint256[](path.length);
         amounts[0] = amountIn;
         amounts[path.length - 1] = amountOutMin;
         return amounts;

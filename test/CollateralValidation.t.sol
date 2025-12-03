@@ -23,11 +23,11 @@ contract CollateralValidationTest is Test {
         collToken = new MockERC20("Coll", "COL", 18);
 
         // Set up oracle: both tokens priced at 1e18
-    MockAggregator aggL = new MockAggregator(18, int256(1e18));
-    MockAggregator aggC = new MockAggregator(18, int256(1e18));
-    oracle = new PriceOracle();
-    oracle.setPriceFeed(address(lendToken), address(aggL));
-    oracle.setPriceFeed(address(collToken), address(aggC));
+        MockAggregator aggL = new MockAggregator(18, int256(1e18));
+        MockAggregator aggC = new MockAggregator(18, int256(1e18));
+        oracle = new PriceOracle();
+        oracle.setPriceFeed(address(lendToken), address(aggL));
+        oracle.setPriceFeed(address(collToken), address(aggC));
 
         pool = new LendingPool(address(oracle));
         pool.setEnforceCollateralValidation(true);
@@ -44,7 +44,8 @@ contract CollateralValidationTest is Test {
     function testExactCollateralPasses() public {
         vm.startPrank(lender);
         lendToken.approve(address(pool), 100 ether);
-        uint256 offerId = pool.createLendingOffer(address(lendToken), 100 ether, 1000, 30 days, address(collToken), 10000); // 100% ratio
+        uint256 offerId =
+            pool.createLendingOffer(address(lendToken), 100 ether, 1000, 30 days, address(collToken), 10000); // 100% ratio
         vm.stopPrank();
 
         vm.startPrank(borrower);
@@ -57,7 +58,8 @@ contract CollateralValidationTest is Test {
     function testUnderCollateralReverts() public {
         vm.startPrank(lender);
         lendToken.approve(address(pool), 100 ether);
-        uint256 offerId = pool.createLendingOffer(address(lendToken), 100 ether, 1000, 30 days, address(collToken), 10000); // 100% ratio
+        uint256 offerId =
+            pool.createLendingOffer(address(lendToken), 100 ether, 1000, 30 days, address(collToken), 10000); // 100% ratio
         vm.stopPrank();
 
         vm.startPrank(borrower);
@@ -71,7 +73,8 @@ contract CollateralValidationTest is Test {
         // borrower posts request with collateral amount exactly 100% of principal value
         vm.startPrank(borrower);
         collToken.approve(address(pool), 100 ether);
-        uint256 reqId = pool.createBorrowRequest(address(lendToken), 100 ether, 1000, 30 days, address(collToken), 100 ether);
+        uint256 reqId =
+            pool.createBorrowRequest(address(lendToken), 100 ether, 1000, 30 days, address(collToken), 100 ether);
         vm.stopPrank();
 
         vm.startPrank(lender);

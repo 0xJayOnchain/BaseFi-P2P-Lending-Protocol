@@ -48,7 +48,8 @@ contract LiquidationTest is Test {
         // lender creates offer
         vm.startPrank(lender);
         lendToken.approve(address(pool), 100 ether);
-        uint256 offerId = pool.createLendingOffer(address(lendToken), 100 ether, 600, 90 days, address(collateralToken), 15000);
+        uint256 offerId =
+            pool.createLendingOffer(address(lendToken), 100 ether, 600, 90 days, address(collateralToken), 15000);
         vm.stopPrank();
 
         // borrower accepts
@@ -66,7 +67,7 @@ contract LiquidationTest is Test {
         vm.stopPrank();
 
         // loan should be marked liquidated
-        (,,,,, uint256 principal, uint256 collateralAmount, , , bool repaid, bool liquidated) = pool.getLoan(loanId);
+        (,,,,, uint256 principal, uint256 collateralAmount,,, bool repaid, bool liquidated) = pool.getLoan(loanId);
         assertEq(liquidated, true);
         assertEq(repaid, false);
         assertEq(principal, 100 ether);
@@ -79,7 +80,7 @@ contract LiquidationTest is Test {
         assertEq(pool.ownerFees(address(collateralToken)), expectedPenalty);
 
         // NFTs should be burned
-        (, , , , , , , uint256 ltid, uint256 btid, , ) = pool.getLoan(loanId);
+        (,,,,,,, uint256 ltid, uint256 btid,,) = pool.getLoan(loanId);
         vm.expectRevert();
         nft.ownerOf(ltid);
         vm.expectRevert();
@@ -90,7 +91,8 @@ contract LiquidationTest is Test {
         // lender creates offer
         vm.startPrank(lender);
         lendToken.approve(address(pool), 100 ether);
-        uint256 offerId = pool.createLendingOffer(address(lendToken), 100 ether, 600, 90 days, address(collateralToken), 15000);
+        uint256 offerId =
+            pool.createLendingOffer(address(lendToken), 100 ether, 600, 90 days, address(collateralToken), 15000);
         vm.stopPrank();
 
         // borrower accepts
@@ -108,7 +110,7 @@ contract LiquidationTest is Test {
         vm.stopPrank();
 
         // loan should be marked liquidated
-        (,,,,, uint256 principal, uint256 collateralAmount, , , bool repaid, bool liquidated) = pool.getLoan(loanId);
+        (,,,,, uint256 principal, uint256 collateralAmount,,, bool repaid, bool liquidated) = pool.getLoan(loanId);
         assertEq(liquidated, true);
         assertEq(repaid, false);
 
