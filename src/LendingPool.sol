@@ -56,6 +56,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
         address collateralToken;
         uint256 principal;
         uint256 interestRateBPS;
+        uint256 collateralRatioBPS;
         uint256 startTime;
         uint256 durationSecs;
         uint256 collateralAmount;
@@ -110,6 +111,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
     event OwnerFeeBpsUpdated(uint256 oldBps, uint256 newBps);
     event PenaltyBpsUpdated(uint256 oldBps, uint256 newBps);
     event OwnerFeesClaimed(address indexed token, address indexed to, uint256 amount);
+    event LoanLiquidated(uint256 indexed loanId, address indexed liquidator, uint256 collateralToLiquidator, uint256 penaltyCollateral);
 
     event LendingOfferCreated(uint256 indexed id, address indexed lender, address lendToken, uint256 amount);
     event LendingOfferCancelled(uint256 indexed id);
@@ -244,6 +246,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
         loans[loanId].interestRateBPS = o.interestRateBPS;
         loans[loanId].startTime = block.timestamp;
         loans[loanId].durationSecs = o.durationSecs;
+    loans[loanId].collateralRatioBPS = o.collateralRatioBPS;
         loans[loanId].collateralAmount = collateralAmount;
         loans[loanId].lenderPositionTokenId = 0;
         loans[loanId].borrowerPositionTokenId = 0;
@@ -286,7 +289,25 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
         loans[loanId].interestRateBPS = r.maxInterestRateBPS;
         loans[loanId].startTime = block.timestamp;
         loans[loanId].durationSecs = r.durationSecs;
+        // compute implied collateral ratio in BPS at loan creation using oracle (if available)
         loans[loanId].collateralAmount = r.collateralAmount;
+        uint256 ratioBPS = 0;
+        // attempt to compute ratio; if oracle available, compute normalized values to derive a ratio
+        if (address(priceOracle) != address(0)) {
+            uint256 pCollateral = priceOracle.getNormalizedPrice(r.collateralToken);
+            uint256 pLend = priceOracle.getNormalizedPrice(r.borrowToken);
+            // principal value = principal * pLend / 1e18
+            // collateral value = collateralAmount * pCollateral / 1e18
+            // ratioBPS = collateralValue * 10000 / principalValue
+            if (pLend > 0) {
+                uint256 principalValue = (r.amount * pLend) / 1e18;
+                if (principalValue > 0) {
+                    uint256 collateralValue = (r.collateralAmount * pCollateral) / 1e18;
+                    ratioBPS = (collateralValue * 10000) / principalValue;
+                }
+            }
+        }
+        loans[loanId].collateralRatioBPS = ratioBPS;
         loans[loanId].lenderPositionTokenId = 0;
         loans[loanId].borrowerPositionTokenId = 0;
         loans[loanId].repaid = false;
@@ -370,5 +391,73 @@ contract LendingPool is BaseP2P, ReentrancyGuard {
         ownerFees[token] = 0;
         _safeTransfer(IERC20(token), owner(), amt);
         emit OwnerFeesClaimed(token, owner(), amt);
+    }
+
+    /// @notice Liquidate a loan if expired or undercollateralized. Caller must be lender or lender-NFT owner.
+    function liquidate(uint256 loanId) external nonReentrant {
+        Loan storage L = loans[loanId];
+        require(L.id != 0, "invalid loan");
+        require(!L.repaid && !L.liquidated, "loan closed");
+
+        // permission: lender or current owner of lender position NFT
+        bool isLender = (msg.sender == L.lender);
+        if (!isLender && address(loanPositionNFT) != address(0) && L.lenderPositionTokenId != 0) {
+            address ownerOfLenderToken = loanPositionNFT.ownerOf(L.lenderPositionTokenId);
+            require(msg.sender == ownerOfLenderToken, "not lender or token owner");
+        } else if (!isLender) {
+            revert("not lender");
+        }
+
+        // check expiry
+        bool expired = (block.timestamp > L.startTime + L.durationSecs);
+
+        // check undercollateralization if collateral ratio present
+        bool undercollateralized = false;
+        if (L.collateralRatioBPS > 0) {
+            // compute normalized values
+            uint256 pLend = priceOracle.getNormalizedPrice(L.lendToken);
+            uint256 pColl = priceOracle.getNormalizedPrice(L.collateralToken);
+            require(pLend > 0 && pColl > 0, "invalid price");
+
+            uint256 principalValue = (L.principal * pLend) / 1e18;
+            uint256 collateralValue = (L.collateralAmount * pColl) / 1e18;
+            uint256 requiredCollateralValue = (principalValue * L.collateralRatioBPS) / 10000;
+            if (collateralValue < requiredCollateralValue) undercollateralized = true;
+        }
+
+        require(expired || undercollateralized, "not liquidatable");
+
+        // compute penalty in principal units (lendToken), then convert to collateral units to withhold
+        uint256 penaltyInLend = (L.principal * penaltyBPS) / 10000;
+        uint256 penaltyCollateral = 0;
+        if (penaltyInLend > 0) {
+            uint256 pLend = priceOracle.getNormalizedPrice(L.lendToken);
+            uint256 pColl = priceOracle.getNormalizedPrice(L.collateralToken);
+            require(pLend > 0 && pColl > 0, "invalid price");
+            // penaltyCollateral = penaltyInLend * pLend / pColl
+            penaltyCollateral = (penaltyInLend * pLend) / pColl;
+            if (penaltyCollateral > L.collateralAmount) penaltyCollateral = L.collateralAmount;
+            // accrue owner fees in collateral token units
+            ownerFees[L.collateralToken] += penaltyCollateral;
+        }
+
+        uint256 toLiquidator = L.collateralAmount;
+        if (penaltyCollateral > 0) {
+            toLiquidator = L.collateralAmount - penaltyCollateral;
+        }
+
+        // transfer collateral (less penalty) to caller
+        if (toLiquidator > 0) {
+            _safeTransfer(IERC20(L.collateralToken), msg.sender, toLiquidator);
+        }
+
+        // burn position NFTs if present
+        if (address(loanPositionNFT) != address(0)) {
+            if (L.lenderPositionTokenId != 0) loanPositionNFT.burn(L.lenderPositionTokenId);
+            if (L.borrowerPositionTokenId != 0) loanPositionNFT.burn(L.borrowerPositionTokenId);
+        }
+
+        L.liquidated = true;
+        emit LoanLiquidated(loanId, msg.sender, toLiquidator, penaltyCollateral);
     }
 }
