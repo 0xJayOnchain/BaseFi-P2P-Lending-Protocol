@@ -9,6 +9,8 @@ import "../src/LoanPositionNFT.sol";
 import "../src/mocks/MockAggregator.sol";
 
 contract CollateralValidationTest is Test {
+    // re-declare event for matching
+    event EnforceCollateralValidationSet(bool enabled);
     MockERC20 lendToken;
     MockERC20 collToken;
     LendingPool pool;
@@ -29,8 +31,11 @@ contract CollateralValidationTest is Test {
         oracle.setPriceFeed(address(lendToken), address(aggL));
         oracle.setPriceFeed(address(collToken), address(aggC));
 
-        pool = new LendingPool(address(oracle));
-        pool.setEnforceCollateralValidation(true);
+    pool = new LendingPool(address(oracle));
+    // expect event when toggling on
+            vm.expectEmit(false, false, false, true);
+            emit EnforceCollateralValidationSet(true);
+    pool.setEnforceCollateralValidation(true);
 
         nft = new LoanPositionNFT("LoanPos", "LPOS");
         bytes32 MINTER = keccak256("MINTER_ROLE");
@@ -39,6 +44,17 @@ contract CollateralValidationTest is Test {
 
         lendToken.mint(lender, 1000 ether);
         collToken.mint(borrower, 2000 ether);
+    }
+
+    function testToggleCollateralValidationEmitsEvent() public {
+        // toggle off
+        vm.expectEmit(false, false, false, true);
+            emit EnforceCollateralValidationSet(false);
+        pool.setEnforceCollateralValidation(false);
+        // toggle on again
+        vm.expectEmit(false, false, false, true);
+            emit EnforceCollateralValidationSet(true);
+        pool.setEnforceCollateralValidation(true);
     }
 
     function testExactCollateralPasses() public {

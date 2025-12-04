@@ -13,12 +13,15 @@ contract PriceOracle is Ownable {
     uint256 public maxPriceAge; // seconds; 0 means no staleness check
 
     event PriceFeedSet(address indexed token, address indexed aggregator);
+    event MaxPriceAgeSet(uint256 oldAge, uint256 newAge);
 
     constructor() Ownable(msg.sender) {}
 
     /// @notice Set the maximum allowed age for price data in seconds; 0 disables staleness check
     function setMaxPriceAge(uint256 seconds_) external onlyOwner {
+        uint256 old = maxPriceAge;
         maxPriceAge = seconds_;
+        emit MaxPriceAgeSet(old, seconds_);
     }
 
     function setPriceFeed(address token, address aggregator) external onlyOwner {

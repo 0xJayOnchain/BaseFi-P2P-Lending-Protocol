@@ -7,6 +7,8 @@ import "../src/mocks/MockUniswapV2Router.sol";
 import "../src/LendingPool.sol";
 
 contract RouterWhitelistTest is Test {
+    // re-declare event for matching
+    event RouterWhitelistedSet(address indexed router, bool whitelisted);
     MockERC20 lendToken;
     MockUniswapV2Router router;
     LendingPool pool;
@@ -34,5 +36,16 @@ contract RouterWhitelistTest is Test {
         path[1] = address(lendToken);
         vm.expectRevert(bytes("router not whitelisted"));
         pool.claimAndSwapFees(address(router), address(lendToken), path, 0, block.timestamp + 1);
+    }
+
+    function testWhitelistEmitsEvent() public {
+        vm.expectEmit(true, false, false, true);
+        emit RouterWhitelistedSet(address(router), true);
+        pool.setRouterWhitelisted(address(router), true);
+
+        // flip back to false
+        vm.expectEmit(true, false, false, true);
+        emit RouterWhitelistedSet(address(router), false);
+        pool.setRouterWhitelisted(address(router), false);
     }
 }

@@ -136,6 +136,10 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     );
     event BorrowRequestCancelled(uint256 indexed id);
 
+    // Round 2: admin/safety observability
+    event RouterWhitelistedSet(address indexed router, bool whitelisted);
+    event EnforceCollateralValidationSet(bool enabled);
+
     constructor(address _priceOracle) BaseP2P() {
         // Best-effort set; may be a non-oracle during tests. Price checks will gracefully skip if calls fail.
         priceOracle = PriceOracle(_priceOracle);
@@ -169,11 +173,13 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     /// @notice Manage router whitelist for swaps
     function setRouterWhitelisted(address router, bool whitelisted) external onlyOwner {
         routerWhitelist[router] = whitelisted;
+        emit RouterWhitelistedSet(router, whitelisted);
     }
 
     /// @notice Enable or disable collateral validation at match-time
     function setEnforceCollateralValidation(bool on) external onlyOwner {
         enforceCollateralValidation = on;
+        emit EnforceCollateralValidationSet(on);
     }
 
     function setOwnerFeeBPS(uint256 bps) external onlyOwner {

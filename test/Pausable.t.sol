@@ -8,6 +8,9 @@ import "../src/LendingPool.sol";
 import "../src/LoanPositionNFT.sol";
 
 contract PausableTest is Test {
+    // re-declare events to use with expectEmit
+    event Paused(address account);
+    event Unpaused(address account);
     MockERC20 lendToken;
     MockERC20 collateralToken;
     LendingPool pool;
@@ -43,6 +46,18 @@ contract PausableTest is Test {
         vm.expectRevert();
         pool.createLendingOffer(address(lendToken), 100 ether, 1000, 90 days, address(collateralToken), 15000);
         vm.stopPrank();
+    }
+
+    function testPauseUnpauseEmitsEvents() public {
+        // Unpause first (currently paused from setUp)
+        vm.expectEmit(false, false, false, true);
+        emit Unpaused(address(this));
+        pool.unpause();
+
+        // Pause again
+        vm.expectEmit(false, false, false, true);
+        emit Paused(address(this));
+        pool.pause();
     }
 
     function testPausedBlocksCreateRequest() public {
