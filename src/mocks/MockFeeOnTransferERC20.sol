@@ -13,9 +13,14 @@ contract MockFeeOnTransferERC20 is ERC20 {
     }
 
     uint8 private _decimals;
-    function decimals() public view override returns (uint8) { return _decimals; }
 
-    function mint(address to, uint256 amount) external { _mint(to, amount); }
+    function decimals() public view override returns (uint8) {
+        return _decimals;
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
 
     function _update(address from, address to, uint256 value) internal override {
         if (from != address(0) && to != address(0) && value > 0) {

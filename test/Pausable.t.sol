@@ -11,6 +11,7 @@ contract PausableTest is Test {
     // re-declare events to use with expectEmit
     event Paused(address account);
     event Unpaused(address account);
+
     MockERC20 lendToken;
     MockERC20 collateralToken;
     LendingPool pool;

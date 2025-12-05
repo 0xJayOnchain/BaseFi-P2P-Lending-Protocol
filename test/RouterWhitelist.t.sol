@@ -9,6 +9,7 @@ import "../src/LendingPool.sol";
 contract RouterWhitelistTest is Test {
     // re-declare event for matching
     event RouterWhitelistedSet(address indexed router, bool whitelisted);
+
     MockERC20 lendToken;
     MockUniswapV2Router router;
     LendingPool pool;

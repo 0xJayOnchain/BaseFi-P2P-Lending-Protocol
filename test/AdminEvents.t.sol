@@ -7,6 +7,7 @@ import "../src/LendingPool.sol";
 contract AdminEventsTest is Test {
     LendingPool pool;
     // re-declare events for matching
+
     event OwnerFeeBpsUpdated(uint256 oldBps, uint256 newBps);
     event PenaltyBpsUpdated(uint256 oldBps, uint256 newBps);
 

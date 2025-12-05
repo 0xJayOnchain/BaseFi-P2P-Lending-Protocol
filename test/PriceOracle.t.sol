@@ -9,6 +9,7 @@ contract PriceOracleTest is Test {
     // re-declare events for matching
     event PriceFeedSet(address indexed token, address indexed aggregator);
     event MaxPriceAgeSet(uint256 oldAge, uint256 newAge);
+
     PriceOracle oracle;
     MockAggregator feed;
     address token = address(0x123);
@@ -17,8 +18,8 @@ contract PriceOracleTest is Test {
         oracle = new PriceOracle();
         // this test contract is the owner of the oracle
         feed = new MockAggregator(8, int256(2000 * 10 ** 8)); // price = 2000 (8 decimals)
-    vm.expectEmit(true, true, false, true);
-    emit PriceFeedSet(token, address(feed));
+        vm.expectEmit(true, true, false, true);
+        emit PriceFeedSet(token, address(feed));
         oracle.setPriceFeed(token, address(feed));
     }
 
