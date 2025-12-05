@@ -24,15 +24,21 @@ jobs:
         run: forge test -vv
 
   slither:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Run Slither
-        uses: crytic/slither-action@v0.4.0
-        with:
-          slither-args: --ignore-compile
-          target: "."
+  runs-on: ubuntu-latest
+  steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Install Foundry
+      uses: foundry-rs/foundry-toolchain@v1
+      with:
+        version: stable
+    - name: Build
+      run: forge build
+    - name: Run Slither
+      uses: crytic/slither-action@v0.4.0
+      with:
+        slither-args: --ignore-compile
+        target: "."
 
   solhint:
     runs-on: ubuntu-latest
