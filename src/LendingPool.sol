@@ -9,7 +9,17 @@ import "./BaseP2P.sol";
 import "./PriceOracle.sol";
 import "./interfaces/ILoanPositionNFT.sol";
 
+/// @title IUniswapV2Router
+/// @author BaseFi P2P Lending Protocol
+/// @notice Interface for Uniswap V2-compatible router contracts
 interface IUniswapV2Router {
+    /// @notice Swaps an exact amount of input tokens for as many output tokens as possible
+    /// @param amountIn The amount of input tokens to send
+    /// @param amountOutMin The minimum amount of output tokens that must be received
+    /// @param path An array of token addresses representing the swap path
+    /// @param to Recipient of the output tokens
+    /// @param deadline Unix timestamp after which the transaction will revert
+    /// @return amounts The input token amount and all subsequent output token amounts
     function swapExactTokensForTokens(
         uint256 amountIn,
         uint256 amountOutMin,
@@ -19,6 +29,9 @@ interface IUniswapV2Router {
     ) external returns (uint256[] memory amounts);
 }
 
+/// @title LendingPool
+/// @author BaseFi P2P Lending Protocol
+/// @notice Main contract for P2P lending with offers, requests, and loan management
 contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
@@ -48,15 +61,23 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         bool active;
     }
 
+    /// @notice Price oracle contract for collateral validation
     PriceOracle public priceOracle;
+    /// @notice NFT contract for loan position tokens
     ILoanPositionNFT public loanPositionNFT;
+    /// @notice Whitelist of approved router contracts for fee swaps
     mapping(address => bool) public routerWhitelist;
+    /// @notice Whether to enforce collateral validation at match time
     bool public enforceCollateralValidation;
 
+    /// @notice Counter for generating unique offer IDs
     uint256 public nextOfferId = 1;
+    /// @notice Counter for generating unique request IDs
     uint256 public nextRequestId = 1;
 
+    /// @notice Mapping of offer ID to offer data
     mapping(uint256 => Offer) public offers;
+    /// @notice Mapping of request ID to request data
     mapping(uint256 => Request) public requests;
 
     struct Loan {
@@ -79,10 +100,23 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         bool liquidated;
     }
 
+    /// @notice Counter for generating unique loan IDs
     uint256 public nextLoanId = 1;
     mapping(uint256 => Loan) private loans;
 
     /// @notice Get core loan data (smaller tuple to avoid large public accessor)
+    /// @param loanId The ID of the loan to retrieve
+    /// @return id The loan ID
+    /// @return lender The address of the lender
+    /// @return borrower The address of the borrower
+    /// @return lendToken The address of the lent token
+    /// @return collateralToken The address of the collateral token
+    /// @return principal The principal amount lent
+    /// @return collateralAmount The amount of collateral locked
+    /// @return lenderPositionTokenId The NFT token ID for the lender position
+    /// @return borrowerPositionTokenId The NFT token ID for the borrower position
+    /// @return repaid Whether the loan has been repaid
+    /// @return liquidated Whether the loan has been liquidated
     function getLoan(uint256 loanId)
         external
         view
@@ -100,52 +134,98 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
             bool liquidated
         )
     {
-        Loan storage L = loans[loanId];
+        Loan storage loan = loans[loanId];
         return (
-            L.id,
-            L.lender,
-            L.borrower,
-            L.lendToken,
-            L.collateralToken,
-            L.principal,
-            L.collateralAmount,
-            L.lenderPositionTokenId,
-            L.borrowerPositionTokenId,
-            L.repaid,
-            L.liquidated
+            loan.id,
+            loan.lender,
+            loan.borrower,
+            loan.lendToken,
+            loan.collateralToken,
+            loan.principal,
+            loan.collateralAmount,
+            loan.lenderPositionTokenId,
+            loan.borrowerPositionTokenId,
+            loan.repaid,
+            loan.liquidated
         );
     }
 
     // fees and penalty
+    /// @notice Owner fee in basis points (1 BPS = 0.01%)
     uint256 public ownerFeeBPS;
-    uint256 public penaltyBPS = 200; // default 2%
-    mapping(address => uint256) public ownerFees; // token => amount
+    /// @notice Liquidation penalty in basis points (default 2%)
+    uint256 public penaltyBPS = 200;
+    /// @notice Accumulated owner fees per token
+    mapping(address => uint256) public ownerFees;
 
-    event OwnerFeeBpsUpdated(uint256 oldBps, uint256 newBps);
-    event PenaltyBpsUpdated(uint256 oldBps, uint256 newBps);
-    event OwnerFeesClaimed(address indexed token, address indexed to, uint256 amount);
+    /// @notice Emitted when owner fee BPS is updated
+    /// @param oldBps The previous fee in basis points
+    /// @param newBps The new fee in basis points
+    event OwnerFeeBpsUpdated(uint256 indexed oldBps, uint256 indexed newBps);
+    /// @notice Emitted when penalty BPS is updated
+    /// @param oldBps The previous penalty in basis points
+    /// @param newBps The new penalty in basis points
+    event PenaltyBpsUpdated(uint256 indexed oldBps, uint256 indexed newBps);
+    /// @notice Emitted when owner fees are claimed
+    /// @param token The token address of the fees claimed
+    /// @param to The address receiving the fees
+    /// @param amount The amount of fees claimed
+    event OwnerFeesClaimed(address indexed token, address indexed to, uint256 indexed amount);
+    /// @notice Emitted when a loan is liquidated
+    /// @param loanId The ID of the liquidated loan
+    /// @param liquidator The address of the liquidator
+    /// @param collateralToLiquidator The amount of collateral sent to the liquidator
+    /// @param penaltyCollateral The amount of collateral taken as penalty
     event LoanLiquidated(
-        uint256 indexed loanId, address indexed liquidator, uint256 collateralToLiquidator, uint256 penaltyCollateral
+        uint256 indexed loanId, address indexed liquidator, uint256 indexed collateralToLiquidator, uint256 indexed penaltyCollateral
     );
-    event OwnerFeesSwapped(address indexed tokenIn, address indexed tokenOut, uint256 amountIn, uint256 amountOut);
+    /// @notice Emitted when owner fees are swapped
+    /// @param tokenIn The input token being swapped
+    /// @param tokenOut The output token received
+    /// @param amountIn The amount of input tokens swapped
+    /// @param amountOut The amount of output tokens received
+    event OwnerFeesSwapped(address indexed tokenIn, address indexed tokenOut, uint256 indexed amountIn, uint256 indexed amountOut);
 
-    event LendingOfferCreated(uint256 indexed id, address indexed lender, address lendToken, uint256 amount);
+    /// @notice Emitted when a lending offer is created
+    /// @param id The offer ID
+    /// @param lender The address of the lender
+    /// @param lendToken The token being lent
+    /// @param amount The amount being offered
+    event LendingOfferCreated(uint256 indexed id, address indexed lender, address indexed lendToken, uint256 indexed amount);
+    /// @notice Emitted when a lending offer is cancelled
+    /// @param id The offer ID
     event LendingOfferCancelled(uint256 indexed id);
+    /// @notice Emitted when a borrow request is created
+    /// @param id The request ID
+    /// @param borrower The address of the borrower
+    /// @param collateralToken The collateral token address
+    /// @param collateralAmount The amount of collateral deposited
     event BorrowRequestCreated(
-        uint256 indexed id, address indexed borrower, address collateralToken, uint256 collateralAmount
+        uint256 indexed id, address indexed borrower, address indexed collateralToken, uint256 indexed collateralAmount
     );
+    /// @notice Emitted when a borrow request is cancelled
+    /// @param id The request ID
     event BorrowRequestCancelled(uint256 indexed id);
 
     // Round 2: admin/safety observability
-    event RouterWhitelistedSet(address indexed router, bool whitelisted);
-    event EnforceCollateralValidationSet(bool enabled);
+    /// @notice Emitted when a router is added or removed from whitelist
+    /// @param router The router address
+    /// @param whitelisted Whether the router is whitelisted
+    event RouterWhitelistedSet(address indexed router, bool indexed whitelisted);
+    /// @notice Emitted when collateral validation enforcement is toggled
+    /// @param enabled Whether enforcement is enabled
+    event EnforceCollateralValidationSet(bool indexed enabled);
 
+    /// @notice Constructor initializes the lending pool with a price oracle
+    /// @param _priceOracle Address of the price oracle contract
     constructor(address _priceOracle) BaseP2P() {
         // Best-effort set; may be a non-oracle during tests. Price checks will gracefully skip if calls fail.
         priceOracle = PriceOracle(_priceOracle);
     }
 
-    /// @dev Safely fetch normalized price from oracle; returns 0 if oracle call fails
+    /// @notice Safely fetch normalized price from oracle; returns 0 if oracle call fails
+    /// @param token The token address to get the price for
+    /// @return p The normalized price (18 decimals) or 0 if unavailable
     function _normalizedPrice(address token) internal view returns (uint256 p) {
         if (address(priceOracle) == address(0)) return 0;
         // try/catch to avoid test setups passing a non-PriceOracle address
@@ -156,6 +236,8 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         }
     }
 
+    /// @notice Set the loan position NFT contract address
+    /// @param _nft The address of the NFT contract
     function setLoanPositionNFT(address _nft) external onlyOwner {
         loanPositionNFT = ILoanPositionNFT(_nft);
     }
@@ -171,17 +253,22 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     }
 
     /// @notice Manage router whitelist for swaps
+    /// @param router The router contract address
+    /// @param whitelisted Whether the router should be whitelisted
     function setRouterWhitelisted(address router, bool whitelisted) external onlyOwner {
         routerWhitelist[router] = whitelisted;
         emit RouterWhitelistedSet(router, whitelisted);
     }
 
     /// @notice Enable or disable collateral validation at match-time
+    /// @param on Whether to enable collateral validation
     function setEnforceCollateralValidation(bool on) external onlyOwner {
         enforceCollateralValidation = on;
         emit EnforceCollateralValidationSet(on);
     }
 
+    /// @notice Set the owner fee in basis points (1 BPS = 0.01%)
+    /// @param bps The fee in basis points (max 10000 = 100%)
     function setOwnerFeeBPS(uint256 bps) external onlyOwner {
         require(bps <= 10000, "bps>10000");
         uint256 old = ownerFeeBPS;
@@ -189,6 +276,8 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         emit OwnerFeeBpsUpdated(old, bps);
     }
 
+    /// @notice Set the liquidation penalty in basis points (1 BPS = 0.01%)
+    /// @param bps The penalty in basis points (max 10000 = 100%)
     function setPenaltyBPS(uint256 bps) external onlyOwner {
         require(bps <= 10000, "bps>10000");
         uint256 old = penaltyBPS;
@@ -196,6 +285,14 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         emit PenaltyBpsUpdated(old, bps);
     }
 
+    /// @notice Create a lending offer by depositing tokens
+    /// @param lendToken The token address to lend
+    /// @param amount The amount to lend
+    /// @param interestRateBPS The interest rate in basis points per year
+    /// @param durationSecs The loan duration in seconds
+    /// @param collateralToken The required collateral token address
+    /// @param collateralRatioBPS The required collateral ratio in basis points
+    /// @return The created offer ID
     function createLendingOffer(
         address lendToken,
         uint256 amount,
@@ -230,6 +327,8 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         return id;
     }
 
+    /// @notice Cancel a lending offer and retrieve deposited tokens
+    /// @param offerId The ID of the offer to cancel
     function cancelLendingOffer(uint256 offerId) external virtual nonReentrant whenNotPaused {
         Offer storage o = offers[offerId];
         require(o.active, "not active");
@@ -241,6 +340,14 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         emit LendingOfferCancelled(offerId);
     }
 
+    /// @notice Create a borrow request by depositing collateral
+    /// @param borrowToken The token address to borrow
+    /// @param amount The amount to borrow
+    /// @param maxInterestRateBPS The maximum acceptable interest rate in basis points per year
+    /// @param durationSecs The desired loan duration in seconds
+    /// @param collateralToken The collateral token address
+    /// @param collateralAmount The amount of collateral to deposit
+    /// @return The created request ID
     function createBorrowRequest(
         address borrowToken,
         uint256 amount,
@@ -277,6 +384,8 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         return id;
     }
 
+    /// @notice Cancel a borrow request and retrieve deposited collateral
+    /// @param requestId The ID of the request to cancel
     function cancelBorrowRequest(uint256 requestId) external virtual nonReentrant whenNotPaused {
         Request storage r = requests[requestId];
         require(r.active, "not active");
@@ -288,6 +397,9 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     }
 
     /// @notice Borrower accepts an existing lender offer. Borrower must provide collateral now.
+    /// @param offerId The ID of the offer to accept
+    /// @param collateralAmount The amount of collateral to provide
+    /// @return The created loan ID
     function acceptOfferByBorrower(uint256 offerId, uint256 collateralAmount)
         external
         nonReentrant
@@ -349,6 +461,8 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     }
 
     /// @notice Lender accepts an existing borrow request by funding principal now.
+    /// @param requestId The ID of the request to accept
+    /// @return The created loan ID
     function acceptRequestByLender(uint256 requestId) external nonReentrant whenNotPaused returns (uint256) {
         Request storage r = requests[requestId];
         require(r.active, "request not active");
@@ -421,6 +535,10 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         return loanId;
     }
 
+    /// @notice Mint lender and borrower position NFTs for a loan
+    /// @param loanId The loan ID
+    /// @param lenderAddr The lender's address
+    /// @param borrowerAddr The borrower's address
     function _mintPositions(uint256 loanId, address lenderAddr, address borrowerAddr) internal {
         uint256 ltid = loanPositionNFT.mint(lenderAddr, loanId, ILoanPositionNFT.Role.LENDER);
         uint256 btid = loanPositionNFT.mint(borrowerAddr, loanId, ILoanPositionNFT.Role.BORROWER);
@@ -428,6 +546,8 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         loans[loanId].borrowerPositionTokenId = btid;
     }
 
+    /// @notice Burn lender and borrower position NFTs for a loan
+    /// @param loanId The loan ID
     function _burnPositions(uint256 loanId) internal {
         uint256 ltid = loans[loanId].lenderPositionTokenId;
         uint256 btid = loans[loanId].borrowerPositionTokenId;
@@ -436,48 +556,52 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     }
 
     /// @notice Compute linear accrued interest for a loan up to now
+    /// @param loanId The loan ID
+    /// @return The accrued interest amount
     function accruedInterest(uint256 loanId) public view returns (uint256) {
-        Loan storage L = loans[loanId];
-        if (L.repaid || L.liquidated) return 0;
-        uint256 elapsed = block.timestamp - L.startTime;
-        if (elapsed > L.durationSecs) elapsed = L.durationSecs;
+        Loan storage loan = loans[loanId];
+        if (loan.repaid || loan.liquidated) return 0;
+        uint256 elapsed = block.timestamp - loan.startTime;
+        if (elapsed > loan.durationSecs) elapsed = loan.durationSecs;
         // principal * rateBPS * elapsed / (365 days * 10000)
-        return (L.principal * L.interestRateBPS * elapsed) / (365 days * 10000);
+        return (loan.principal * loan.interestRateBPS * elapsed) / (365 days * 10000);
     }
 
     /// @notice Borrower repays full principal + accrued interest. Burns NFTs on full repay.
+    /// @param loanId The loan ID to repay
     function repayFull(uint256 loanId) external nonReentrant whenNotPaused {
-        Loan storage L = loans[loanId];
-        require(!L.repaid && !L.liquidated, "loan closed");
-        require(msg.sender == L.borrower, "only borrower");
+        Loan storage loan = loans[loanId];
+        require(!loan.repaid && !loan.liquidated, "loan closed");
+        require(msg.sender == loan.borrower, "only borrower");
 
         uint256 interest = accruedInterest(loanId);
         uint256 ownerFee = (interest * ownerFeeBPS) / 10000;
         uint256 lenderInterest = interest - ownerFee;
-        uint256 totalDue = L.principal + interest;
+        uint256 totalDue = loan.principal + interest;
 
         // transfer totalDue from borrower to contract
-        _safeTransferFrom(IERC20(L.lendToken), msg.sender, address(this), totalDue);
+        _safeTransferFrom(IERC20(loan.lendToken), msg.sender, address(this), totalDue);
 
         // pay lender principal + interest - ownerFee
-        _safeTransfer(IERC20(L.lendToken), L.lender, L.principal + lenderInterest);
+        _safeTransfer(IERC20(loan.lendToken), loan.lender, loan.principal + lenderInterest);
 
         // accumulate owner fee
-        ownerFees[L.lendToken] += ownerFee;
+        ownerFees[loan.lendToken] += ownerFee;
 
         // return collateral
-        _safeTransfer(IERC20(L.collateralToken), L.borrower, L.collateralAmount);
+        _safeTransfer(IERC20(loan.collateralToken), loan.borrower, loan.collateralAmount);
 
         // burn NFTs if present and minter role
         if (address(loanPositionNFT) != address(0)) {
-            if (L.lenderPositionTokenId != 0) loanPositionNFT.burn(L.lenderPositionTokenId);
-            if (L.borrowerPositionTokenId != 0) loanPositionNFT.burn(L.borrowerPositionTokenId);
+            if (loan.lenderPositionTokenId != 0) loanPositionNFT.burn(loan.lenderPositionTokenId);
+            if (loan.borrowerPositionTokenId != 0) loanPositionNFT.burn(loan.borrowerPositionTokenId);
         }
 
-        L.repaid = true;
+        loan.repaid = true;
     }
 
     /// @notice Claim accumulated owner fees for a token
+    /// @param token The token address to claim fees for
     function claimOwnerFees(address token) external onlyOwner nonReentrant whenNotPaused {
         uint256 amt = ownerFees[token];
         require(amt > 0, "no fees");
@@ -488,6 +612,11 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
 
     /// @notice Owner-only: swap all accumulated fees in tokenIn to tokenOut via a Uniswap V2-like router.
     /// @dev Uses check-effects-interactions, SafeERC20 approvals, and emits OwnerFeesSwapped.
+    /// @param router The router contract address
+    /// @param tokenIn The input token to swap
+    /// @param path The swap path (first element must be tokenIn)
+    /// @param amountOutMin The minimum amount of output tokens expected
+    /// @param deadline The deadline for the swap transaction
     function claimAndSwapFees(
         address router,
         address tokenIn,
@@ -521,70 +650,71 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     }
 
     /// @notice Liquidate a loan if expired or undercollateralized. Caller must be lender or lender-NFT owner.
+    /// @param loanId The loan ID to liquidate
     function liquidate(uint256 loanId) external nonReentrant whenNotPaused {
-        Loan storage L = loans[loanId];
-        require(L.id != 0, "invalid loan");
-        require(!L.repaid && !L.liquidated, "loan closed");
+        Loan storage loan = loans[loanId];
+        require(loan.id != 0, "invalid loan");
+        require(!loan.repaid && !loan.liquidated, "loan closed");
 
         // permission: lender or current owner of lender position NFT
-        bool isLender = (msg.sender == L.lender);
-        if (!isLender && address(loanPositionNFT) != address(0) && L.lenderPositionTokenId != 0) {
-            address ownerOfLenderToken = loanPositionNFT.ownerOf(L.lenderPositionTokenId);
+        bool isLender = (msg.sender == loan.lender);
+        if (!isLender && address(loanPositionNFT) != address(0) && loan.lenderPositionTokenId != 0) {
+            address ownerOfLenderToken = loanPositionNFT.ownerOf(loan.lenderPositionTokenId);
             require(msg.sender == ownerOfLenderToken, "not lender or token owner");
         } else if (!isLender) {
             revert("not lender");
         }
 
         // check expiry
-        bool expired = (block.timestamp > L.startTime + L.durationSecs);
+        bool expired = (block.timestamp > loan.startTime + loan.durationSecs);
 
         // check undercollateralization if collateral ratio present
         bool undercollateralized = false;
-        if (L.collateralRatioBPS > 0) {
+        if (loan.collateralRatioBPS > 0) {
             // compute normalized values
-            uint256 pLend = priceOracle.getNormalizedPrice(L.lendToken);
-            uint256 pColl = priceOracle.getNormalizedPrice(L.collateralToken);
+            uint256 pLend = priceOracle.getNormalizedPrice(loan.lendToken);
+            uint256 pColl = priceOracle.getNormalizedPrice(loan.collateralToken);
             require(pLend > 0 && pColl > 0, "invalid price");
 
-            uint256 principalValue = (L.principal * pLend) / 1e18;
-            uint256 collateralValue = (L.collateralAmount * pColl) / 1e18;
-            uint256 requiredCollateralValue = (principalValue * L.collateralRatioBPS) / 10000;
+            uint256 principalValue = (loan.principal * pLend) / 1e18;
+            uint256 collateralValue = (loan.collateralAmount * pColl) / 1e18;
+            uint256 requiredCollateralValue = (principalValue * loan.collateralRatioBPS) / 10000;
             if (collateralValue < requiredCollateralValue) undercollateralized = true;
         }
 
         require(expired || undercollateralized, "not liquidatable");
 
         // compute penalty in principal units (lendToken), then convert to collateral units to withhold
-        uint256 penaltyInLend = (L.principal * penaltyBPS) / 10000;
+        uint256 penaltyInLend = (loan.principal * penaltyBPS) / 10000;
         uint256 penaltyCollateral = 0;
         if (penaltyInLend > 0) {
-            uint256 pLend = priceOracle.getNormalizedPrice(L.lendToken);
-            uint256 pColl = priceOracle.getNormalizedPrice(L.collateralToken);
+            uint256 pLend = priceOracle.getNormalizedPrice(loan.lendToken);
+            uint256 pColl = priceOracle.getNormalizedPrice(loan.collateralToken);
             require(pLend > 0 && pColl > 0, "invalid price");
             // penaltyCollateral = penaltyInLend * pLend / pColl
             penaltyCollateral = (penaltyInLend * pLend) / pColl;
-            if (penaltyCollateral > L.collateralAmount) penaltyCollateral = L.collateralAmount;
+            if (penaltyCollateral > loan.collateralAmount) penaltyCollateral = loan.collateralAmount;
             // accrue owner fees in collateral token units
-            ownerFees[L.collateralToken] += penaltyCollateral;
+            ownerFees[loan.collateralToken] += penaltyCollateral;
         }
 
-        uint256 toLiquidator = L.collateralAmount;
+        uint256 toLiquidator = loan.collateralAmount;
         if (penaltyCollateral > 0) {
-            toLiquidator = L.collateralAmount - penaltyCollateral;
+            toLiquidator = loan.collateralAmount - penaltyCollateral;
         }
 
         // transfer collateral (less penalty) to caller
         if (toLiquidator > 0) {
-            _safeTransfer(IERC20(L.collateralToken), msg.sender, toLiquidator);
+            _safeTransfer(IERC20(loan.collateralToken), msg.sender, toLiquidator);
         }
 
         // burn position NFTs if present
         if (address(loanPositionNFT) != address(0)) {
-            if (L.lenderPositionTokenId != 0) loanPositionNFT.burn(L.lenderPositionTokenId);
-            if (L.borrowerPositionTokenId != 0) loanPositionNFT.burn(L.borrowerPositionTokenId);
+            if (loan.lenderPositionTokenId != 0) loanPositionNFT.burn(loan.lenderPositionTokenId);
+            if (loan.borrowerPositionTokenId != 0) loanPositionNFT.burn(loan.borrowerPositionTokenId);
         }
 
-        L.liquidated = true;
+        loan.liquidated = true;
         emit LoanLiquidated(loanId, msg.sender, toLiquidator, penaltyCollateral);
     }
 }
