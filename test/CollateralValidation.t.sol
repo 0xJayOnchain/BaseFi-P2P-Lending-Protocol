@@ -49,8 +49,8 @@ contract CollateralValidationTest is Test {
         pool.setEnforceCollateralValidation(true);
 
         nft = new LoanPositionNFT("LoanPos", "LPOS");
-    bytes32 minterRole = keccak256("MINTER_ROLE");
-    nft.grantRole(minterRole, address(pool));
+        bytes32 minterRole = keccak256("MINTER_ROLE");
+        nft.grantRole(minterRole, address(pool));
         pool.setLoanPositionNFT(address(nft));
 
         lendToken.mint(lender, 1000 ether);
