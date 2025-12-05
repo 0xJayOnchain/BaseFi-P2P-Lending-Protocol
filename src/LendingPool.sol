@@ -180,7 +180,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         uint256 indexed loanId,
         address indexed liquidator,
         uint256 indexed collateralToLiquidator,
-        uint256 indexed penaltyCollateral
+        uint256 penaltyCollateral
     );
     /// @notice Emitted when owner fees are swapped
     /// @param tokenIn The input token being swapped
@@ -188,7 +188,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     /// @param amountIn The amount of input tokens swapped
     /// @param amountOut The amount of output tokens received
     event OwnerFeesSwapped(
-        address indexed tokenIn, address indexed tokenOut, uint256 indexed amountIn, uint256 indexed amountOut
+        address indexed tokenIn, address indexed tokenOut, uint256 indexed amountIn, uint256 amountOut
     );
 
     /// @notice Emitted when a lending offer is created
@@ -197,7 +197,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     /// @param lendToken The token being lent
     /// @param amount The amount being offered
     event LendingOfferCreated(
-        uint256 indexed id, address indexed lender, address indexed lendToken, uint256 indexed amount
+        uint256 indexed id, address indexed lender, address indexed lendToken, uint256 amount
     );
     /// @notice Emitted when a lending offer is cancelled
     /// @param id The offer ID
@@ -208,7 +208,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     /// @param collateralToken The collateral token address
     /// @param collateralAmount The amount of collateral deposited
     event BorrowRequestCreated(
-        uint256 indexed id, address indexed borrower, address indexed collateralToken, uint256 indexed collateralAmount
+        uint256 indexed id, address indexed borrower, address indexed collateralToken, uint256 collateralAmount
     );
     /// @notice Emitted when a borrow request is cancelled
     /// @param id The request ID
