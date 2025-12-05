@@ -190,6 +190,15 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     event OwnerFeesSwapped(
         address indexed tokenIn, address indexed tokenOut, uint256 indexed amountIn, uint256 amountOut
     );
+    /// @notice Emitted when a borrower repays a loan using a swap
+    /// @param loanId The ID of the repaid loan
+    /// @param router The router used for the swap
+    /// @param tokenIn The input token provided by the borrower
+    /// @param amountIn The amount of input tokens swapped
+    /// @param amountOut The amount of lend tokens received from the swap
+    event RepayWithSwap(
+        uint256 indexed loanId, address indexed router, address indexed tokenIn, uint256 amountIn, uint256 amountOut
+    );
 
     /// @notice Emitted when a lending offer is created
     /// @param id The offer ID
@@ -652,6 +661,71 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
 
         uint256 amountOut = amounts[amounts.length - 1];
         emit OwnerFeesSwapped(tokenIn, tokenOut, amtIn, amountOut);
+    }
+
+    /// @notice Opt-in: Borrower repays full loan using a swap from an arbitrary input token to the lend token
+    /// @dev Uses a whitelisted Uniswap V2-like router. Slippage guarded via borrower-provided amountOutMin and deadline.
+    /// @param loanId The loan ID to repay
+    /// @param router The router contract address (must be whitelisted)
+    /// @param amountIn The amount of input tokens to swap
+    /// @param path The swap path; first token is the input token provided by borrower, last must equal the loan lend token
+    /// @param amountOutMin The minimum acceptable amount of lend tokens from the swap (should be >= totalDue)
+    /// @param deadline Unix timestamp after which the swap will revert
+    function repayFullWithSwap(
+        uint256 loanId,
+        address router,
+        uint256 amountIn,
+        address[] calldata path,
+        uint256 amountOutMin,
+        uint256 deadline
+    ) external nonReentrant whenNotPaused {
+        Loan storage loan = loans[loanId];
+        require(loan.id != 0, "invalid loan");
+        require(!loan.repaid && !loan.liquidated, "loan closed");
+        require(msg.sender == loan.borrower, "only borrower");
+        require(router != address(0), "router=0");
+        require(routerWhitelist[router], "router not whitelisted");
+        require(path.length >= 2, "bad path");
+        require(amountIn > 0, "amountIn>0");
+        require(path[path.length - 1] == loan.lendToken, "path last != lendToken");
+
+        // compute total due
+        uint256 interest = accruedInterest(loanId);
+        uint256 ownerFee = (interest * ownerFeeBPS) / 10000;
+        uint256 lenderInterest = interest - ownerFee;
+        uint256 totalDue = loan.principal + interest;
+
+        // take input tokens from borrower into pool and approve router
+        _safeTransferFrom(IERC20(path[0]), msg.sender, address(this), amountIn);
+        IERC20(path[0]).safeIncreaseAllowance(router, amountIn);
+
+        // swap to lend token with proceeds to this contract
+        uint256[] memory amounts =
+            IUniswapV2Router(router).swapExactTokensForTokens(amountIn, amountOutMin, path, address(this), deadline);
+
+        // clear allowance
+        IERC20(path[0]).approve(router, 0);
+
+        uint256 amountOut = amounts[amounts.length - 1];
+        require(amountOut >= totalDue, "insufficient out");
+
+        // pay lender principal + interest - owner fee in lend token
+        _safeTransfer(IERC20(loan.lendToken), loan.lender, loan.principal + lenderInterest);
+
+        // accumulate owner fee in lend token
+        ownerFees[loan.lendToken] += ownerFee;
+
+        // return collateral to borrower
+        _safeTransfer(IERC20(loan.collateralToken), loan.borrower, loan.collateralAmount);
+
+        // burn NFTs if present
+        if (address(loanPositionNFT) != address(0)) {
+            if (loan.lenderPositionTokenId != 0) loanPositionNFT.burn(loan.lenderPositionTokenId);
+            if (loan.borrowerPositionTokenId != 0) loanPositionNFT.burn(loan.borrowerPositionTokenId);
+        }
+
+        loan.repaid = true;
+        emit RepayWithSwap(loanId, router, path[0], amountIn, amountOut);
     }
 
     /// @notice Liquidate a loan if expired or undercollateralized. Caller must be lender or lender-NFT owner.
