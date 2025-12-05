@@ -205,8 +205,12 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         uint256 collateralRatioBPS
     ) external virtual nonReentrant whenNotPaused returns (uint256) {
         require(amount > 0, "amount>0");
-        // transfer principal into escrow
+        // transfer principal into escrow and verify received equals requested (reject fee-on-transfer tokens)
+        uint256 beforeBal = IERC20(lendToken).balanceOf(address(this));
         _safeTransferFrom(IERC20(lendToken), msg.sender, address(this), amount);
+        uint256 afterBal = IERC20(lendToken).balanceOf(address(this));
+        require(afterBal >= beforeBal, "balance underflow");
+        require(afterBal - beforeBal == amount, "fee-on-transfer unsupported");
 
         uint256 id = nextOfferId++;
         offers[id] = Offer({
@@ -248,8 +252,12 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         require(amount > 0, "amount>0");
         require(collateralAmount > 0, "collateral>0");
 
-        // transfer collateral into escrow
+        // transfer collateral into escrow and verify received equals requested (reject fee-on-transfer tokens)
+        uint256 beforeColl = IERC20(collateralToken).balanceOf(address(this));
         _safeTransferFrom(IERC20(collateralToken), msg.sender, address(this), collateralAmount);
+        uint256 afterColl = IERC20(collateralToken).balanceOf(address(this));
+        require(afterColl >= beforeColl, "balance underflow");
+        require(afterColl - beforeColl == collateralAmount, "fee-on-transfer unsupported");
 
         uint256 id = nextRequestId++;
         requests[id] = Request({

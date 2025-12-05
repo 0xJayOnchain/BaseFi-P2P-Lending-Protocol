@@ -32,16 +32,12 @@ contract ERC20EdgeCasesTest is Test {
 
         vm.startPrank(lender);
         lendToken.approve(address(pool), 100 ether);
-        // create offer of 100 ether; due to 1% fee, pool will receive only 99 ether
-        uint256 offerId = pool.createLendingOffer(address(lendToken), 100 ether, 1000, 30 days, address(collToken), 10000);
+            // With the guard, this should revert because received != requested
+            vm.expectRevert(bytes("fee-on-transfer unsupported"));
+            pool.createLendingOffer(address(lendToken), 100 ether, 1000, 30 days, address(collToken), 10000);
         vm.stopPrank();
 
-        // borrower tries to accept, expecting principal transfer of 100 ether from pool, but pool only holds 99 ether
-        vm.startPrank(borrower);
-        collToken.approve(address(pool), 100 ether);
-        vm.expectRevert(); // SafeERC20 transfer should revert due to insufficient balance
-        pool.acceptOfferByBorrower(offerId, 100 ether);
-        vm.stopPrank();
+    // No further steps: creation reverted due to fee-on-transfer guard.
     }
 
     function testNoReturnERC20WorksWithSafeERC20() public {
