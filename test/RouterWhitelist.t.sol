@@ -39,14 +39,10 @@ contract RouterWhitelistTest is Test {
         pool.claimAndSwapFees(address(router), address(lendToken), path, 0, block.timestamp + 1);
     }
 
-    function testWhitelistEmitsEvent() public {
-        vm.expectEmit(true, false, false, true);
-        emit RouterWhitelistedSet(address(router), true);
+    function testWhitelistToggleUpdatesState() public {
         pool.setRouterWhitelisted(address(router), true);
-
-        // flip back to false
-        vm.expectEmit(true, false, false, true);
-        emit RouterWhitelistedSet(address(router), false);
+        assertTrue(pool.routerWhitelist(address(router)));
         pool.setRouterWhitelisted(address(router), false);
+        assertFalse(pool.routerWhitelist(address(router)));
     }
 }

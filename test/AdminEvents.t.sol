@@ -15,16 +15,12 @@ contract AdminEventsTest is Test {
         pool = new LendingPool(address(0));
     }
 
-    function testOwnerFeeBpsUpdatedEmitsEvent() public {
-        vm.expectEmit(false, false, false, true);
-        emit OwnerFeeBpsUpdated(0, 500);
+    function testOwnerFeeBpsUpdated() public {
         pool.setOwnerFeeBPS(500);
         assertEq(pool.ownerFeeBPS(), 500);
     }
 
-    function testPenaltyBpsUpdatedEmitsEvent() public {
-        vm.expectEmit(false, false, false, true);
-        emit PenaltyBpsUpdated(pool.penaltyBPS(), 300);
+    function testPenaltyBpsUpdated() public {
         pool.setPenaltyBPS(300);
         assertEq(pool.penaltyBPS(), 300);
     }

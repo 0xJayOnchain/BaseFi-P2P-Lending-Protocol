@@ -196,9 +196,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     /// @param lender The address of the lender
     /// @param lendToken The token being lent
     /// @param amount The amount being offered
-    event LendingOfferCreated(
-        uint256 indexed id, address indexed lender, address indexed lendToken, uint256 amount
-    );
+    event LendingOfferCreated(uint256 indexed id, address indexed lender, address indexed lendToken, uint256 amount);
     /// @notice Emitted when a lending offer is cancelled
     /// @param id The offer ID
     event LendingOfferCancelled(uint256 indexed id);

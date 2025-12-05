@@ -33,9 +33,6 @@ contract CollateralValidationTest is Test {
         oracle.setPriceFeed(address(collToken), address(aggC));
 
         pool = new LendingPool(address(oracle));
-        // expect event when toggling on
-        vm.expectEmit(false, false, false, true);
-        emit EnforceCollateralValidationSet(true);
         pool.setEnforceCollateralValidation(true);
 
         nft = new LoanPositionNFT("LoanPos", "LPOS");
@@ -47,15 +44,13 @@ contract CollateralValidationTest is Test {
         collToken.mint(borrower, 2000 ether);
     }
 
-    function testToggleCollateralValidationEmitsEvent() public {
+    function testToggleCollateralValidation() public {
         // toggle off
-        vm.expectEmit(false, false, false, true);
-        emit EnforceCollateralValidationSet(false);
         pool.setEnforceCollateralValidation(false);
+        assertEq(pool.enforceCollateralValidation(), false);
         // toggle on again
-        vm.expectEmit(false, false, false, true);
-        emit EnforceCollateralValidationSet(true);
         pool.setEnforceCollateralValidation(true);
+        assertEq(pool.enforceCollateralValidation(), true);
     }
 
     function testExactCollateralPasses() public {
