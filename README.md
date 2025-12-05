@@ -48,11 +48,20 @@ Notes
 - Owner-only admin calls exist in `LendingPool` (set fees, set NFT contract, claim owner fees). Tests instantiate the pool with the test contract as owner to exercise these functions.
 - Many tests use `MockERC20` and `MockAggregator` found in `src/mocks/`.
  - Safety: `LendingPool` is `Pausable`; router whitelist is enforced for swaps; collateral validation is opt-in via `setEnforceCollateralValidation(bool)`; `PriceOracle` supports `maxPriceAge` staleness checks.
- - An optional hybrid path is planned: owner sweep-and-swap is implemented; user-opt-in repay/liquidate with conversion can be added with slippage controls and router whitelisting.
+ - Opt-in swap repay: Borrowers can use `repayFullWithSwap(...)` to swap from any input token into the loan’s lend token via a whitelisted router and repay in one tx. See "Opt-in swap paths" below for rules and constraints.
 
 Compatibility
 - Fee-on-transfer tokens: currently unsupported. We require escrow transfers to credit the exact requested amount; fee-on-transfer tokens would result in under-escrow and are rejected with `fee-on-transfer unsupported`.
 - Non-standard ERC20s: we use SafeERC20 for compatibility, and tests include non-standard behaviors and unusual decimals.
+
+Opt-in swap paths (Repay with swap)
+- What: `repayFullWithSwap(uint256 loanId, address router, uint256 amountIn, address[] path, uint256 amountOutMin, uint256 deadline)` lets the borrower repay using an arbitrary input token.
+- Router whitelist: `router` must be whitelisted by the owner using `setRouterWhitelisted(address,bool)`.
+- Path rules: `path.length >= 2`; `path[0]` is the input token provided by the borrower; `path[path.length - 1]` MUST equal the loan’s `lendToken`.
+- Slippage & deadline: borrower sets `amountOutMin` and `deadline`. The router enforces the deadline; the pool requires swap output `>= totalDue` (principal + accrued interest).
+- Pausable & permissions: function is `whenNotPaused`; only the `borrower` can call it.
+- Approvals: allowance for the router is increased only for the swap and then reset to zero.
+- Events: emits `RepayWithSwap(loanId, router, tokenIn, amountIn, amountOut)` on success for observability.
 
 Next recommended steps (Round 2 scope)
 - Eventing and observability: emit events for pause/unpause, router whitelist changes, collateral validation toggles, and oracle feed updates.
