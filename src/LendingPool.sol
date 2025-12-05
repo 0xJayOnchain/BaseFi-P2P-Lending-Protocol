@@ -177,21 +177,28 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     /// @param collateralToLiquidator The amount of collateral sent to the liquidator
     /// @param penaltyCollateral The amount of collateral taken as penalty
     event LoanLiquidated(
-        uint256 indexed loanId, address indexed liquidator, uint256 indexed collateralToLiquidator, uint256 indexed penaltyCollateral
+        uint256 indexed loanId,
+        address indexed liquidator,
+        uint256 indexed collateralToLiquidator,
+        uint256 indexed penaltyCollateral
     );
     /// @notice Emitted when owner fees are swapped
     /// @param tokenIn The input token being swapped
     /// @param tokenOut The output token received
     /// @param amountIn The amount of input tokens swapped
     /// @param amountOut The amount of output tokens received
-    event OwnerFeesSwapped(address indexed tokenIn, address indexed tokenOut, uint256 indexed amountIn, uint256 indexed amountOut);
+    event OwnerFeesSwapped(
+        address indexed tokenIn, address indexed tokenOut, uint256 indexed amountIn, uint256 indexed amountOut
+    );
 
     /// @notice Emitted when a lending offer is created
     /// @param id The offer ID
     /// @param lender The address of the lender
     /// @param lendToken The token being lent
     /// @param amount The amount being offered
-    event LendingOfferCreated(uint256 indexed id, address indexed lender, address indexed lendToken, uint256 indexed amount);
+    event LendingOfferCreated(
+        uint256 indexed id, address indexed lender, address indexed lendToken, uint256 indexed amount
+    );
     /// @notice Emitted when a lending offer is cancelled
     /// @param id The offer ID
     event LendingOfferCancelled(uint256 indexed id);
