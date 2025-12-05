@@ -8,16 +8,32 @@ import "../src/LendingPool.sol";
 import "../src/LoanPositionNFT.sol";
 import "../src/mocks/MockAggregator.sol";
 
+/// @title CollateralValidationTest
+/// @author BaseFi
+/// @notice Tests collateral validation behavior with PriceOracle integration.
 contract CollateralValidationTest is Test {
-    MockERC20 lendToken;
-    MockERC20 collToken;
-    LendingPool pool;
-    PriceOracle oracle;
-    LoanPositionNFT nft;
+    // re-declare event for matching
+    /// @notice Emitted when collateral validation enforcement is toggled
+    /// @param enabled Whether enforcement is enabled
+    event EnforceCollateralValidationSet(bool enabled);
 
-    address lender = address(0xBEEF);
-    address borrower = address(0xCAFE);
+    /// @notice Lend token used in tests
+    MockERC20 internal lendToken;
+    /// @notice Collateral token used in tests
+    MockERC20 internal collToken;
+    /// @notice Pool under test
+    LendingPool internal pool;
+    /// @notice Oracle used to provide normalized prices
+    PriceOracle internal oracle;
+    /// @notice Position NFT used for mint/burn
+    LoanPositionNFT internal nft;
 
+    /// @notice Test lender address
+    address internal lender = address(0xBEEF);
+    /// @notice Test borrower address
+    address internal borrower = address(0xCAFE);
+
+    /// @notice Configure tokens, oracle, pool, and balances before each test
     function setUp() public {
         lendToken = new MockERC20("Lend", "LND", 18);
         collToken = new MockERC20("Coll", "COL", 18);
@@ -33,14 +49,25 @@ contract CollateralValidationTest is Test {
         pool.setEnforceCollateralValidation(true);
 
         nft = new LoanPositionNFT("LoanPos", "LPOS");
-        bytes32 MINTER = keccak256("MINTER_ROLE");
-        nft.grantRole(MINTER, address(pool));
+        bytes32 minterRole = keccak256("MINTER_ROLE");
+        nft.grantRole(minterRole, address(pool));
         pool.setLoanPositionNFT(address(nft));
 
         lendToken.mint(lender, 1000 ether);
         collToken.mint(borrower, 2000 ether);
     }
 
+    /// @notice Toggling collateral validation flag changes pool state
+    function testToggleCollateralValidation() public {
+        // toggle off
+        pool.setEnforceCollateralValidation(false);
+        assertEq(pool.enforceCollateralValidation(), false);
+        // toggle on again
+        pool.setEnforceCollateralValidation(true);
+        assertEq(pool.enforceCollateralValidation(), true);
+    }
+
+    /// @notice Exact collateral equal to principal value passes validation
     function testExactCollateralPasses() public {
         vm.startPrank(lender);
         lendToken.approve(address(pool), 100 ether);
@@ -55,6 +82,7 @@ contract CollateralValidationTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Under-collateralized attempt reverts with validation enabled
     function testUnderCollateralReverts() public {
         vm.startPrank(lender);
         lendToken.approve(address(pool), 100 ether);
@@ -69,6 +97,7 @@ contract CollateralValidationTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Lender acceptance validates posted collateral when enabled
     function testAcceptRequestValidation() public {
         // borrower posts request with collateral amount exactly 100% of principal value
         vm.startPrank(borrower);

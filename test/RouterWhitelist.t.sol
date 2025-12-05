@@ -6,17 +6,30 @@ import "../src/mocks/MockERC20.sol";
 import "../src/mocks/MockUniswapV2Router.sol";
 import "../src/LendingPool.sol";
 
+/// @title RouterWhitelistTest
+/// @author BaseFi
+/// @notice Tests router whitelist enforcement and toggling behavior.
 contract RouterWhitelistTest is Test {
-    MockERC20 lendToken;
-    MockUniswapV2Router router;
-    LendingPool pool;
+    /// @notice Event emitted when a router is toggled in the whitelist
+    /// @param router The router address
+    /// @param whitelisted True if the router is whitelisted
+    event RouterWhitelistedSet(address indexed router, bool whitelisted);
 
+    /// @notice Test ERC20 used for fee paths
+    MockERC20 internal lendToken;
+    /// @notice Mock router used for testing
+    MockUniswapV2Router internal router;
+    /// @notice Pool under test
+    LendingPool internal pool;
+
+    /// @notice Deploy test contracts and setup pool
     function setUp() public {
         lendToken = new MockERC20("Lend", "LND", 18);
         router = new MockUniswapV2Router();
         pool = new LendingPool(address(0));
     }
 
+    /// @notice claim-and-swap reverts if router is not whitelisted
     function testRevertWhenRouterNotWhitelisted() public {
         // accumulate some owner fees
         pool.setOwnerFeeBPS(1000);
@@ -34,5 +47,13 @@ contract RouterWhitelistTest is Test {
         path[1] = address(lendToken);
         vm.expectRevert(bytes("router not whitelisted"));
         pool.claimAndSwapFees(address(router), address(lendToken), path, 0, block.timestamp + 1);
+    }
+
+    /// @notice toggling whitelist updates internal state
+    function testWhitelistToggleUpdatesState() public {
+        pool.setRouterWhitelisted(address(router), true);
+        assertTrue(pool.routerWhitelist(address(router)));
+        pool.setRouterWhitelisted(address(router), false);
+        assertFalse(pool.routerWhitelist(address(router)));
     }
 }

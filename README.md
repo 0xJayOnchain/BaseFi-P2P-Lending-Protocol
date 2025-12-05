@@ -50,9 +50,16 @@ Notes
  - Safety: `LendingPool` is `Pausable`; router whitelist is enforced for swaps; collateral validation is opt-in via `setEnforceCollateralValidation(bool)`; `PriceOracle` supports `maxPriceAge` staleness checks.
  - An optional hybrid path is planned: owner sweep-and-swap is implemented; user-opt-in repay/liquidate with conversion can be added with slippage controls and router whitelisting.
 
+Compatibility
+- Fee-on-transfer tokens: currently unsupported. We require escrow transfers to credit the exact requested amount; fee-on-transfer tokens would result in under-escrow and are rejected with `fee-on-transfer unsupported`.
+- Non-standard ERC20s: we use SafeERC20 for compatibility, and tests include non-standard behaviors and unusual decimals.
+
 Next recommended steps (Round 2 scope)
 - Eventing and observability: emit events for pause/unpause, router whitelist changes, collateral validation toggles, and oracle feed updates.
 - More edge-case tests: fee-on-transfer tokens, tokens with unusual decimals, non-standard ERC20s.
 - Gas and safety reviews: add CI (Slither, solhint), audit prep checklist.
 - Optional repay/liquidate with conversion: user-opt-in paths with slippage controls and router whitelist.
+
+CI & static analysis
+- GitHub Actions runs Foundry tests, Slither static analysis, and solhint style/lint checks. See `.github/workflows/ci.yml`.
 

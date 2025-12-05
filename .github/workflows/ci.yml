@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [ development ]
+  pull_request:
+    branches: [ development ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: Build
+        run: |
+          forge --version
+          forge build
+      - name: Run tests
+        run: forge test -vv
+
+  slither:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: Build
+        run: forge build
+      - name: Run Slither
+        uses: crytic/slither-action@v0.4.0
+        with:
+          target: "."
+          fail-on: none
+
+  solhint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install solhint
+        run: npm install -g solhint
+      - name: Run solhint
+        run: solhint 'src/**/*.sol' 'test/**/*.sol'
