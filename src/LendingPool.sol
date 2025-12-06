@@ -171,6 +171,11 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     /// @param to The address receiving the fees
     /// @param amount The amount of fees claimed
     event OwnerFeesClaimed(address indexed token, address indexed to, uint256 indexed amount);
+    /// @notice Emitted after batch owner fee claims complete
+    /// @param to The recipient (owner)
+    /// @param tokens The list of tokens processed
+    /// @param amounts The amounts claimed for each token (0 if skipped)
+    event OwnerFeesClaimedBatch(address indexed to, address[] tokens, uint256[] amounts);
     /// @notice Emitted when a loan is liquidated
     /// @param loanId The ID of the liquidated loan
     /// @param liquidator The address of the liquidator
@@ -642,14 +647,17 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     function claimOwnerFeesBatch(address[] calldata tokens) external onlyOwner nonReentrant whenNotPaused {
         require(tokens.length > 0, "no tokens");
         address to = owner();
+        uint256[] memory amounts = new uint256[](tokens.length);
         for (uint256 i = 0; i < tokens.length; i++) {
             address token = tokens[i];
             uint256 amt = ownerFees[token];
+            amounts[i] = amt;
             if (amt == 0) continue;
             ownerFees[token] = 0;
             _safeTransfer(IERC20(token), to, amt);
             emit OwnerFeesClaimed(token, to, amt);
         }
+        emit OwnerFeesClaimedBatch(to, tokens, amounts);
     }
 
     /// @notice Owner-only: swap all accumulated fees in tokenIn to tokenOut via a Uniswap V2-like router.
