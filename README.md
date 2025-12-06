@@ -86,4 +86,8 @@ CI & static analysis
 Security & audit prep
 - See `SECURITY.md` for threat model, invariants, safety checks, and an audit checklist.
  - See `docs/architecture.md` for Mermaid diagrams of the architecture and key sequences (offer/request, match, repay, repayWithSwap, liquidate, liquidateWithSwap, batch fee claims).
+ - See `docs/governance.md` for governance, admin controls, and emergency procedures.
+ - See `docs/deployment.md` for environment-specific configuration and deployment checklist.
+ - See `docs/subgraph/` for a starter subgraph (schema, mappings, manifest) to index protocol events.
+ - See `docs/metrics.md` for a metrics catalog and frontend-friendly indexing notes.
 

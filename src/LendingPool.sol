@@ -218,6 +218,34 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         uint256 amountOut
     );
 
+    /// @notice Emitted when a loan is matched/created
+    /// @param loanId The new loan ID
+    /// @param borrower The borrower address
+    /// @param lender The lender address
+    /// @param lendToken The lend token address
+    /// @param collateralToken The collateral token address
+    /// @param principal The principal amount
+    /// @param interestRateBPS Interest rate in basis points
+    /// @param durationSecs Loan duration in seconds
+    /// @param startTime Loan start timestamp
+    event LoanMatched(
+        uint256 indexed loanId,
+        address indexed borrower,
+        address indexed lender,
+        address lendToken,
+        address collateralToken,
+        uint256 principal,
+        uint256 interestRateBPS,
+        uint256 durationSecs,
+        uint256 startTime
+    );
+
+    /// @notice Emitted when a loan is closed (repaid or liquidated)
+    /// @param loanId The loan ID
+    /// @param status The closure status: "repaid" | "repaidSwap" | "liquidated" | "liquidatedSwap"
+    /// @param actor The caller who executed the close
+    event LoanClosed(uint256 indexed loanId, string status, address actor);
+
     /// @notice Emitted when a lending offer is created
     /// @param id The offer ID
     /// @param lender The address of the lender
@@ -489,6 +517,17 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         }
 
         emit LendingOfferCreated(offerId, o.lender, o.lendToken, o.amount);
+        emit LoanMatched(
+            loanId,
+            msg.sender,
+            o.lender,
+            o.lendToken,
+            o.collateralToken,
+            o.amount,
+            o.interestRateBPS,
+            o.durationSecs,
+            loans[loanId].startTime
+        );
         return loanId;
     }
 
@@ -564,6 +603,17 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         }
 
         emit BorrowRequestCreated(requestId, r.borrower, r.collateralToken, r.collateralAmount);
+        emit LoanMatched(
+            loanId,
+            r.borrower,
+            msg.sender,
+            r.borrowToken,
+            r.collateralToken,
+            r.amount,
+            r.maxInterestRateBPS,
+            r.durationSecs,
+            loans[loanId].startTime
+        );
         return loanId;
     }
 
@@ -630,6 +680,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         }
 
         loan.repaid = true;
+        emit LoanClosed(loanId, "repaid", msg.sender);
     }
 
     /// @notice Claim accumulated owner fees for a token
@@ -762,6 +813,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
 
         loan.repaid = true;
         emit RepayWithSwap(loanId, router, path[0], amountIn, amountOut);
+        emit LoanClosed(loanId, "repaidSwap", msg.sender);
     }
 
     /// @notice Liquidate a loan if expired or undercollateralized. Caller must be lender or lender-NFT owner.
@@ -831,6 +883,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
 
         loan.liquidated = true;
         emit LoanLiquidated(loanId, msg.sender, toLiquidator, penaltyCollateral);
+        emit LoanClosed(loanId, "liquidated", msg.sender);
     }
 
     /// @notice Opt-in: Liquidate a loan and swap the liquidator's collateral share into a desired token via a whitelisted router
@@ -917,5 +970,6 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         }
 
         loan.liquidated = true;
+        emit LoanClosed(loanId, "liquidatedSwap", msg.sender);
     }
 }
