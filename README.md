@@ -90,4 +90,5 @@ Security & audit prep
  - See `docs/deployment.md` for environment-specific configuration and deployment checklist.
  - See `docs/subgraph/` for a starter subgraph (schema, mappings, manifest) to index protocol events.
  - See `docs/metrics.md` for a metrics catalog and frontend-friendly indexing notes.
+ - See `docs/integrations.md` for router/aggregator adapters, wallet/dApp integration guidance, and an SDK outline.
 

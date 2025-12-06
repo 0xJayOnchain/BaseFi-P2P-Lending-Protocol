@@ -199,4 +199,123 @@ contract RiskControlsTest is Test {
         pool.repayFull(loanId);
         assertEq(pool.globalActivePrincipal(), 0);
     }
+
+    /// @notice Interest rate band enforced on offer interestRateBPS and request maxInterestRateBPS
+    function test_InterestRateBand_enforced_on_offer_and_request() public {
+        // Configure band: min=100 bps, max=500 bps
+        vm.prank(owner);
+        pool.setInterestRateBand(100, 500);
+
+        // Offer with rate below min -> revert at create
+        vm.prank(lender);
+        vm.expectRevert(bytes("rate<min"));
+        pool.createLendingOffer(address(lendToken), 10 ether, 50, 3 days, address(collateralToken), 10000);
+
+        // Offer with rate above max -> revert at create
+        vm.prank(lender);
+        vm.expectRevert(bytes("rate>max"));
+        pool.createLendingOffer(address(lendToken), 10 ether, 600, 3 days, address(collateralToken), 10000);
+
+        // Offer within band -> ok
+        vm.prank(lender);
+        uint256 offerId =
+            pool.createLendingOffer(address(lendToken), 10 ether, 200, 3 days, address(collateralToken), 10000);
+
+        // Request path: borrower sets maxInterestRate; band enforced at acceptRequestByLender
+        // Request with max below min -> revert at accept
+        vm.prank(borrower);
+        uint256 reqLow =
+            pool.createBorrowRequest(address(lendToken), 10 ether, 50, 3 days, address(collateralToken), 100 ether);
+        vm.prank(lender);
+        vm.expectRevert(bytes("rate<min"));
+        pool.acceptRequestByLender(reqLow);
+
+        // Request with max above max -> revert at accept
+        vm.prank(borrower);
+        uint256 reqHigh =
+            pool.createBorrowRequest(address(lendToken), 10 ether, 600, 3 days, address(collateralToken), 100 ether);
+        vm.prank(lender);
+        vm.expectRevert(bytes("rate>max"));
+        pool.acceptRequestByLender(reqHigh);
+
+        // Request with max within band -> ok
+        vm.prank(borrower);
+        uint256 reqOk =
+            pool.createBorrowRequest(address(lendToken), 10 ether, 300, 3 days, address(collateralToken), 100 ether);
+        vm.prank(lender);
+        uint256 loanIdReq = pool.acceptRequestByLender(reqOk);
+        assertEq(pool.globalActivePrincipal(), 10 ether);
+
+        // Accept offer too, to ensure both paths remain functional under band
+        vm.prank(borrower);
+        uint256 loanIdOffer = pool.acceptOfferByBorrower(offerId, 100 ether);
+        assertEq(pool.globalActivePrincipal(), 20 ether);
+
+        // Repay both
+        vm.prank(borrower);
+        pool.repayFull(loanIdReq);
+        vm.prank(borrower);
+        pool.repayFull(loanIdOffer);
+        assertEq(pool.globalActivePrincipal(), 0);
+    }
+
+    /// @notice Multiple concurrent loans accumulate toward caps and enforce cumulatively
+    function test_CumulativeCaps_multipleLoans_enforced() public {
+        // Set caps: asset cap 150, borrower cap 150, lender cap 150, global cap 200
+        vm.startPrank(owner);
+        pool.setAssetCap(address(lendToken), 150 ether);
+        pool.setBorrowerCap(borrower, 150 ether);
+        pool.setLenderCap(lender, 150 ether);
+        pool.setGlobalActivePrincipalCap(200 ether);
+        vm.stopPrank();
+
+        // Create two offers: 100 and 50 principal
+        vm.prank(lender);
+        uint256 offerA =
+            pool.createLendingOffer(address(lendToken), 100 ether, 0, 7 days, address(collateralToken), 10000);
+        vm.prank(lender);
+        uint256 offerB =
+            pool.createLendingOffer(address(lendToken), 50 ether, 0, 7 days, address(collateralToken), 10000);
+
+        // Accept first offer -> totals = 100
+        vm.prank(borrower);
+        uint256 loanA = pool.acceptOfferByBorrower(offerA, 200 ether);
+        assertEq(pool.globalActivePrincipal(), 100 ether);
+        assertEq(pool.activePrincipalByAsset(address(lendToken)), 100 ether);
+        assertEq(pool.activeBorrowPrincipal(borrower), 100 ether);
+        assertEq(pool.activeLendPrincipal(lender), 100 ether);
+
+        // Accept second offer -> totals = 150 (within caps)
+        vm.prank(borrower);
+        uint256 loanB = pool.acceptOfferByBorrower(offerB, 200 ether);
+        assertEq(pool.globalActivePrincipal(), 150 ether);
+        assertEq(pool.activePrincipalByAsset(address(lendToken)), 150 ether);
+        assertEq(pool.activeBorrowPrincipal(borrower), 150 ether);
+        assertEq(pool.activeLendPrincipal(lender), 150 ether);
+
+        // Try a third small offer that would exceed asset/borrower/lender caps (e.g., +10 -> 160 > 150)
+        vm.prank(lender);
+        uint256 offerC =
+            pool.createLendingOffer(address(lendToken), 10 ether, 0, 7 days, address(collateralToken), 10000);
+        vm.prank(borrower);
+        vm.expectRevert(bytes("asset cap"));
+        pool.acceptOfferByBorrower(offerC, 50 ether);
+
+        // Repay one loan -> frees capacity
+        vm.prank(borrower);
+        pool.repayFull(loanA);
+        assertEq(pool.globalActivePrincipal(), 50 ether);
+
+        // Now accept the third offer (still respects borrower/lender/global caps)
+        vm.prank(borrower);
+        uint256 loanC = pool.acceptOfferByBorrower(offerC, 50 ether);
+        assertEq(pool.globalActivePrincipal(), 60 ether);
+
+        // Repay remaining loans
+        vm.prank(borrower);
+        pool.repayFull(loanB);
+        vm.prank(borrower);
+        pool.repayFull(loanC);
+        assertEq(pool.globalActivePrincipal(), 0);
+    }
 }
