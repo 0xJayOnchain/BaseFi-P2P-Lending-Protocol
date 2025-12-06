@@ -60,6 +60,7 @@ Permissions & roles:
 - Borrower-only actions: loan repayment, including `repayFullWithSwap`.
 - Lender/NFT-owner-only actions: liquidation, including `liquidateWithSwap`.
 - Pausable functions revert when paused.
+ - Guardian role (optional): guardian can pause; only owner can unpause.
 
 Oracle & pricing:
 - When collateral validation is enabled, price data must be available and not stale.
@@ -73,6 +74,7 @@ Swaps & approvals:
 
 Events & observability:
 - Critical actions emit events: pause/unpause, whitelist changes, collateral validation toggles, price age changes, repay/liquidate with swap, owner fee claims (including batch summary).
+ - Lifecycle events: `LoanMatched` on creation and `LoanClosed` on closure (repaid/liquidated) for frontend-friendly indexing.
 
 ## Safety Checks (Design & Code)
 
@@ -119,6 +121,8 @@ Formal/advanced (optional)
 - Configure `PriceOracle` feeds and `maxPriceAge` appropriately per token.
 - Set `LoanPositionNFT` address and roles before enabling public flows.
 - Review fee settings and accrual destinations.
+ - Configure `liquidationGracePeriodSecs` (optional) to delay expiry-based liquidation.
+ - Configure interest rate band (min/max BPS) if desired to constrain offers/requests.
 
 ## Known Risks & Mitigations
 

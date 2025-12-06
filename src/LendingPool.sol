@@ -69,6 +69,8 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     mapping(address => bool) public routerWhitelist;
     /// @notice Whether to enforce collateral validation at match time
     bool public enforceCollateralValidation;
+    /// @notice Optional guardian who can pause the protocol (owner can always pause/unpause)
+    address public guardian;
 
     /// @notice Counter for generating unique offer IDs
     uint256 public nextOfferId = 1;
@@ -155,6 +157,11 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     uint256 public ownerFeeBPS;
     /// @notice Liquidation penalty in basis points (default 2%)
     uint256 public penaltyBPS = 200;
+    /// @notice Optional liquidation grace period in seconds added to loan duration before expiry-based liquidation
+    uint256 public liquidationGracePeriodSecs;
+    /// @notice Global interest rate band constraints (optional). If both are zero, band is disabled.
+    uint256 public minInterestRateBPS;
+    uint256 public maxInterestRateBPS;
     /// @notice Accumulated owner fees per token
     mapping(address => uint256) public ownerFees;
 
@@ -275,6 +282,17 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     /// @notice Emitted when collateral validation enforcement is toggled
     /// @param enabled Whether enforcement is enabled
     event EnforceCollateralValidationSet(bool indexed enabled);
+    /// @notice Emitted when guardian is set
+    /// @param newGuardian The new guardian address
+    event GuardianSet(address indexed newGuardian);
+    /// @notice Emitted when liquidation grace period is updated
+    /// @param oldSecs The previous grace period seconds
+    /// @param newSecs The new grace period seconds
+    event LiquidationGracePeriodSet(uint256 indexed oldSecs, uint256 indexed newSecs);
+    /// @notice Emitted when interest rate band is updated
+    /// @param minBps The minimum allowed interest rate (BPS)
+    /// @param maxBps The maximum allowed interest rate (BPS)
+    event InterestRateBandSet(uint256 indexed minBps, uint256 indexed maxBps);
 
     /// @notice Constructor initializes the lending pool with a price oracle
     /// @param _priceOracle Address of the price oracle contract
@@ -303,13 +321,21 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     }
 
     /// @notice Pause the protocol critical functions
-    function pause() external onlyOwner {
+    function pause() external {
+        require(msg.sender == owner() || msg.sender == guardian, "not authorized");
         _pause();
     }
 
     /// @notice Unpause the protocol
     function unpause() external onlyOwner {
         _unpause();
+    }
+
+    /// @notice Set the guardian address (can pause, cannot unpause)
+    /// @param _guardian The guardian address (set to 0 to disable)
+    function setGuardian(address _guardian) external onlyOwner {
+        guardian = _guardian;
+        emit GuardianSet(_guardian);
     }
 
     /// @notice Manage router whitelist for swaps
@@ -345,6 +371,28 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         emit PenaltyBpsUpdated(old, bps);
     }
 
+    /// @notice Set the liquidation grace period in seconds (added to loan duration)
+    /// @param secs The grace period seconds
+    function setLiquidationGracePeriodSecs(uint256 secs) external onlyOwner {
+        uint256 old = liquidationGracePeriodSecs;
+        liquidationGracePeriodSecs = secs;
+        emit LiquidationGracePeriodSet(old, secs);
+    }
+
+    /// @notice Set global interest rate band constraints
+    /// @param minBps Minimum interest rate in BPS (0 disables lower bound)
+    /// @param maxBps Maximum interest rate in BPS (0 disables upper bound)
+    function setInterestRateBand(uint256 minBps, uint256 maxBps) external onlyOwner {
+        require(maxBps == 0 || maxBps <= 10000, "max>10000");
+        require(minBps == 0 || minBps <= 10000, "min>10000");
+        if (minBps != 0 && maxBps != 0) {
+            require(minBps <= maxBps, "min>max");
+        }
+        minInterestRateBPS = minBps;
+        maxInterestRateBPS = maxBps;
+        emit InterestRateBandSet(minBps, maxBps);
+    }
+
     /// @notice Create a lending offer by depositing tokens
     /// @param lendToken The token address to lend
     /// @param amount The amount to lend
@@ -362,6 +410,13 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         uint256 collateralRatioBPS
     ) external virtual nonReentrant whenNotPaused returns (uint256) {
         require(amount > 0, "amount>0");
+        // enforce interest band if configured
+        if (minInterestRateBPS != 0) {
+            require(interestRateBPS >= minInterestRateBPS, "rate<min");
+        }
+        if (maxInterestRateBPS != 0) {
+            require(interestRateBPS <= maxInterestRateBPS, "rate>max");
+        }
         // transfer principal into escrow and verify received equals requested (reject fee-on-transfer tokens)
         uint256 beforeBal = IERC20(lendToken).balanceOf(address(this));
         _safeTransferFrom(IERC20(lendToken), msg.sender, address(this), amount);
@@ -537,6 +592,14 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     function acceptRequestByLender(uint256 requestId) external nonReentrant whenNotPaused returns (uint256) {
         Request storage r = requests[requestId];
         require(r.active, "request not active");
+
+        // enforce interest band if configured
+        if (minInterestRateBPS != 0) {
+            require(r.maxInterestRateBPS >= minInterestRateBPS, "rate<min");
+        }
+        if (maxInterestRateBPS != 0) {
+            require(r.maxInterestRateBPS <= maxInterestRateBPS, "rate>max");
+        }
 
         // transfer principal from lender to contract
         _safeTransferFrom(IERC20(r.borrowToken), msg.sender, address(this), r.amount);
@@ -833,7 +896,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         }
 
         // check expiry
-        bool expired = (block.timestamp > loan.startTime + loan.durationSecs);
+        bool expired = (block.timestamp > loan.startTime + loan.durationSecs + liquidationGracePeriodSecs);
 
         // check undercollateralization if collateral ratio present
         bool undercollateralized = false;
@@ -918,7 +981,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         require(path[0] == loan.collateralToken, "path first != collateral");
 
         // check expiry
-        bool expired = (block.timestamp > loan.startTime + loan.durationSecs);
+        bool expired = (block.timestamp > loan.startTime + loan.durationSecs + liquidationGracePeriodSecs);
 
         // check undercollateralization if collateral ratio present
         bool undercollateralized = false;
