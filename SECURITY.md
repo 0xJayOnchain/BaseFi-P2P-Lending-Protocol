@@ -130,6 +130,8 @@ Formal/advanced (optional)
 - Oracle dependency: staleness and correctness; mitigate via max age guard and feed management.
 - Swap reliance: path correctness and slippage; mitigate via whitelist, input validation, and approval hygiene.
 - Ownership centralization: risk of misconfiguration; mitigate via multi-sig and change control.
+ - Concentration risk: mitigate by enforcing per-asset caps, per-user caps, and a global active principal cap.
+ - Pathological terms: mitigate by enforcing interest rate bands and a maximum loan duration.
 
 ## Audit Handover
 

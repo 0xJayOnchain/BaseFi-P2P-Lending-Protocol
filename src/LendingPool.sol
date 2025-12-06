@@ -164,6 +164,24 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     uint256 public maxInterestRateBPS;
     /// @notice Accumulated owner fees per token
     mapping(address => uint256) public ownerFees;
+    /// @notice Per-asset cap for active principal (0 disables)
+    mapping(address => uint256) public assetCaps;
+    /// @notice Active principal tracked per asset
+    mapping(address => uint256) public activePrincipalByAsset;
+    /// @notice Per-borrower cap for active principal (0 disables)
+    mapping(address => uint256) public borrowerCaps;
+    /// @notice Active principal tracked per borrower
+    mapping(address => uint256) public activeBorrowPrincipal;
+    /// @notice Per-lender cap for active principal (0 disables)
+    mapping(address => uint256) public lenderCaps;
+    /// @notice Active principal tracked per lender
+    mapping(address => uint256) public activeLendPrincipal;
+    /// @notice Global cap for total active principal across all assets (0 disables)
+    uint256 public globalActivePrincipalCap;
+    /// @notice Total active principal across all assets
+    uint256 public globalActivePrincipal;
+    /// @notice Optional maximum duration in seconds for loans (0 disables)
+    uint256 public maxDurationSecs;
 
     /// @notice Emitted when owner fee BPS is updated
     /// @param oldBps The previous fee in basis points
@@ -293,6 +311,26 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     /// @param minBps The minimum allowed interest rate (BPS)
     /// @param maxBps The maximum allowed interest rate (BPS)
     event InterestRateBandSet(uint256 indexed minBps, uint256 indexed maxBps);
+    /// @notice Emitted when an asset cap is set
+    /// @param token The asset token address
+    /// @param cap The cap value (principal units)
+    event AssetCapSet(address indexed token, uint256 indexed cap);
+    /// @notice Emitted when a borrower cap is set
+    /// @param borrower The borrower address
+    /// @param cap The cap value
+    event BorrowerCapSet(address indexed borrower, uint256 indexed cap);
+    /// @notice Emitted when a lender cap is set
+    /// @param lender The lender address
+    /// @param cap The cap value
+    event LenderCapSet(address indexed lender, uint256 indexed cap);
+    /// @notice Emitted when global active principal cap is set
+    /// @param oldCap Previous cap
+    /// @param newCap New cap
+    event GlobalActivePrincipalCapSet(uint256 indexed oldCap, uint256 indexed newCap);
+    /// @notice Emitted when maximum duration is set
+    /// @param oldSecs Previous max duration seconds
+    /// @param newSecs New max duration seconds
+    event MaxDurationSecsSet(uint256 indexed oldSecs, uint256 indexed newSecs);
 
     /// @notice Constructor initializes the lending pool with a price oracle
     /// @param _priceOracle Address of the price oracle contract
@@ -391,6 +429,46 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         minInterestRateBPS = minBps;
         maxInterestRateBPS = maxBps;
         emit InterestRateBandSet(minBps, maxBps);
+    }
+
+    /// @notice Set per-asset cap for active principal
+    /// @param token Asset token address
+    /// @param cap Cap in principal units (0 disables)
+    function setAssetCap(address token, uint256 cap) external onlyOwner {
+        assetCaps[token] = cap;
+        emit AssetCapSet(token, cap);
+    }
+
+    /// @notice Set per-borrower cap for active principal
+    /// @param borrower Borrower address
+    /// @param cap Cap in principal units (0 disables)
+    function setBorrowerCap(address borrower, uint256 cap) external onlyOwner {
+        borrowerCaps[borrower] = cap;
+        emit BorrowerCapSet(borrower, cap);
+    }
+
+    /// @notice Set per-lender cap for active principal
+    /// @param lender Lender address
+    /// @param cap Cap in principal units (0 disables)
+    function setLenderCap(address lender, uint256 cap) external onlyOwner {
+        lenderCaps[lender] = cap;
+        emit LenderCapSet(lender, cap);
+    }
+
+    /// @notice Set global cap for active principal across all assets
+    /// @param cap Cap in principal units (0 disables)
+    function setGlobalActivePrincipalCap(uint256 cap) external onlyOwner {
+        uint256 old = globalActivePrincipalCap;
+        globalActivePrincipalCap = cap;
+        emit GlobalActivePrincipalCapSet(old, cap);
+    }
+
+    /// @notice Set maximum duration for loans in seconds (0 disables)
+    /// @param secs Max duration seconds
+    function setMaxDurationSecs(uint256 secs) external onlyOwner {
+        uint256 old = maxDurationSecs;
+        maxDurationSecs = secs;
+        emit MaxDurationSecsSet(old, secs);
     }
 
     /// @notice Create a lending offer by depositing tokens
@@ -524,6 +602,29 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         Offer storage o = offers[offerId];
         require(o.active, "offer not active");
 
+        // enforce max duration if configured
+        if (maxDurationSecs != 0) {
+            require(o.durationSecs <= maxDurationSecs, "duration>max");
+        }
+        // enforce caps prior to creation
+        uint256 principalAmt = o.amount;
+        uint256 assetCap = assetCaps[o.lendToken];
+        if (assetCap != 0) {
+            require(activePrincipalByAsset[o.lendToken] + principalAmt <= assetCap, "asset cap");
+        }
+        uint256 gcap = globalActivePrincipalCap;
+        if (gcap != 0) {
+            require(globalActivePrincipal + principalAmt <= gcap, "global cap");
+        }
+        uint256 bcap = borrowerCaps[msg.sender];
+        if (bcap != 0) {
+            require(activeBorrowPrincipal[msg.sender] + principalAmt <= bcap, "borrower cap");
+        }
+        uint256 lcap = lenderCaps[o.lender];
+        if (lcap != 0) {
+            require(activeLendPrincipal[o.lender] + principalAmt <= lcap, "lender cap");
+        }
+
         // transfer collateral from borrower
         _safeTransferFrom(IERC20(o.collateralToken), msg.sender, address(this), collateralAmount);
 
@@ -572,6 +673,11 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         }
 
         emit LendingOfferCreated(offerId, o.lender, o.lendToken, o.amount);
+        // accounting: increment active principal trackers
+        globalActivePrincipal += principalAmt;
+        activePrincipalByAsset[o.lendToken] += principalAmt;
+        activeBorrowPrincipal[msg.sender] += principalAmt;
+        activeLendPrincipal[o.lender] += principalAmt;
         emit LoanMatched(
             loanId,
             msg.sender,
@@ -592,6 +698,28 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     function acceptRequestByLender(uint256 requestId) external nonReentrant whenNotPaused returns (uint256) {
         Request storage r = requests[requestId];
         require(r.active, "request not active");
+        // enforce max duration if configured
+        if (maxDurationSecs != 0) {
+            require(r.durationSecs <= maxDurationSecs, "duration>max");
+        }
+        // enforce caps prior to creation
+        uint256 principalAmt = r.amount;
+        uint256 assetCap = assetCaps[r.borrowToken];
+        if (assetCap != 0) {
+            require(activePrincipalByAsset[r.borrowToken] + principalAmt <= assetCap, "asset cap");
+        }
+        uint256 gcap = globalActivePrincipalCap;
+        if (gcap != 0) {
+            require(globalActivePrincipal + principalAmt <= gcap, "global cap");
+        }
+        uint256 bcap = borrowerCaps[r.borrower];
+        if (bcap != 0) {
+            require(activeBorrowPrincipal[r.borrower] + principalAmt <= bcap, "borrower cap");
+        }
+        uint256 lcap = lenderCaps[msg.sender];
+        if (lcap != 0) {
+            require(activeLendPrincipal[msg.sender] + principalAmt <= lcap, "lender cap");
+        }
 
         // enforce interest band if configured
         if (minInterestRateBPS != 0) {
@@ -666,6 +794,11 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         }
 
         emit BorrowRequestCreated(requestId, r.borrower, r.collateralToken, r.collateralAmount);
+        // accounting: increment active principal trackers
+        globalActivePrincipal += principalAmt;
+        activePrincipalByAsset[r.borrowToken] += principalAmt;
+        activeBorrowPrincipal[r.borrower] += principalAmt;
+        activeLendPrincipal[msg.sender] += principalAmt;
         emit LoanMatched(
             loanId,
             r.borrower,
@@ -743,6 +876,8 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         }
 
         loan.repaid = true;
+        // accounting: decrement active principal trackers
+        _decrementActivePrincipal(loan);
         emit LoanClosed(loanId, "repaid", msg.sender);
     }
 
@@ -876,6 +1011,8 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
 
         loan.repaid = true;
         emit RepayWithSwap(loanId, router, path[0], amountIn, amountOut);
+        // accounting: decrement active principal trackers
+        _decrementActivePrincipal(loan);
         emit LoanClosed(loanId, "repaidSwap", msg.sender);
     }
 
@@ -946,6 +1083,8 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
 
         loan.liquidated = true;
         emit LoanLiquidated(loanId, msg.sender, toLiquidator, penaltyCollateral);
+        // accounting: decrement active principal trackers
+        _decrementActivePrincipal(loan);
         emit LoanClosed(loanId, "liquidated", msg.sender);
     }
 
@@ -1033,6 +1172,30 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         }
 
         loan.liquidated = true;
+        // accounting: decrement active principal trackers
+        _decrementActivePrincipal(loan);
         emit LoanClosed(loanId, "liquidatedSwap", msg.sender);
+    }
+
+    /// @notice Internal: decrement active principal trackers on loan close
+    /// @param loan The loan storage reference
+    function _decrementActivePrincipal(Loan storage loan) internal {
+        uint256 principalAmt = loan.principal;
+        // guard against underflow
+        if (globalActivePrincipal >= principalAmt) {
+            globalActivePrincipal -= principalAmt;
+        }
+        uint256 ap = activePrincipalByAsset[loan.lendToken];
+        if (ap >= principalAmt) {
+            activePrincipalByAsset[loan.lendToken] = ap - principalAmt;
+        }
+        uint256 bb = activeBorrowPrincipal[loan.borrower];
+        if (bb >= principalAmt) {
+            activeBorrowPrincipal[loan.borrower] = bb - principalAmt;
+        }
+        uint256 ll = activeLendPrincipal[loan.lender];
+        if (ll >= principalAmt) {
+            activeLendPrincipal[loan.lender] = ll - principalAmt;
+        }
     }
 }
