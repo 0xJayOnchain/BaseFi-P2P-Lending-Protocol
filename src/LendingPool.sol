@@ -199,6 +199,19 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     event RepayWithSwap(
         uint256 indexed loanId, address indexed router, address indexed tokenIn, uint256 amountIn, uint256 amountOut
     );
+    /// @notice Emitted when a loan is liquidated with swap and proceeds sent to the liquidator in desired token
+    /// @param loanId The ID of the liquidated loan
+    /// @param router The router used for the swap
+    /// @param tokenOut The output token sent to the liquidator
+    /// @param collateralIn The amount of collateral used as input to the swap
+    /// @param amountOut The amount of output tokens received by the liquidator
+    event LoanLiquidatedWithSwap(
+        uint256 indexed loanId,
+        address indexed router,
+        address indexed tokenOut,
+        uint256 collateralIn,
+        uint256 amountOut
+    );
 
     /// @notice Emitted when a lending offer is created
     /// @param id The offer ID
@@ -795,5 +808,91 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
 
         loan.liquidated = true;
         emit LoanLiquidated(loanId, msg.sender, toLiquidator, penaltyCollateral);
+    }
+
+    /// @notice Opt-in: Liquidate a loan and swap the liquidator's collateral share into a desired token via a whitelisted router
+    /// @param loanId The loan ID to liquidate
+    /// @param router The router contract address (must be whitelisted)
+    /// @param path The swap path; first token must be the collateral token, last is the desired output token for the liquidator
+    /// @param amountOutMin The minimum acceptable amount of output tokens for the liquidator
+    /// @param deadline Unix timestamp after which the swap will revert
+    function liquidateWithSwap(
+        uint256 loanId,
+        address router,
+        address[] calldata path,
+        uint256 amountOutMin,
+        uint256 deadline
+    ) external nonReentrant whenNotPaused {
+        Loan storage loan = loans[loanId];
+        require(loan.id != 0, "invalid loan");
+        require(!loan.repaid && !loan.liquidated, "loan closed");
+
+        // permission: lender or current owner of lender position NFT
+        bool isLender = (msg.sender == loan.lender);
+        if (!isLender && address(loanPositionNFT) != address(0) && loan.lenderPositionTokenId != 0) {
+            address ownerOfLenderToken = loanPositionNFT.ownerOf(loan.lenderPositionTokenId);
+            require(msg.sender == ownerOfLenderToken, "not lender or token owner");
+        } else if (!isLender) {
+            revert("not lender");
+        }
+
+        require(router != address(0), "router=0");
+        require(routerWhitelist[router], "router not whitelisted");
+        require(path.length >= 2, "bad path");
+        require(path[0] == loan.collateralToken, "path first != collateral");
+
+        // check expiry
+        bool expired = (block.timestamp > loan.startTime + loan.durationSecs);
+
+        // check undercollateralization if collateral ratio present
+        bool undercollateralized = false;
+        if (loan.collateralRatioBPS > 0) {
+            uint256 pLend = priceOracle.getNormalizedPrice(loan.lendToken);
+            uint256 pColl = priceOracle.getNormalizedPrice(loan.collateralToken);
+            require(pLend > 0 && pColl > 0, "invalid price");
+            uint256 principalValue = (loan.principal * pLend) / 1e18;
+            uint256 collateralValue = (loan.collateralAmount * pColl) / 1e18;
+            uint256 requiredCollateralValue = (principalValue * loan.collateralRatioBPS) / 10000;
+            if (collateralValue < requiredCollateralValue) undercollateralized = true;
+        }
+
+        require(expired || undercollateralized, "not liquidatable");
+
+        // compute penalty and withhold in collateral units
+        uint256 penaltyInLend = (loan.principal * penaltyBPS) / 10000;
+        uint256 penaltyCollateral = 0;
+        if (penaltyInLend > 0) {
+            uint256 pLend = priceOracle.getNormalizedPrice(loan.lendToken);
+            uint256 pColl = priceOracle.getNormalizedPrice(loan.collateralToken);
+            require(pLend > 0 && pColl > 0, "invalid price");
+            penaltyCollateral = (penaltyInLend * pLend) / pColl;
+            if (penaltyCollateral > loan.collateralAmount) penaltyCollateral = loan.collateralAmount;
+            ownerFees[loan.collateralToken] += penaltyCollateral;
+        }
+
+        uint256 toLiquidator = loan.collateralAmount;
+        if (penaltyCollateral > 0) {
+            toLiquidator = loan.collateralAmount - penaltyCollateral;
+        }
+
+        // swap the liquidator's collateral share into desired token and send to liquidator
+        if (toLiquidator > 0) {
+            IERC20(loan.collateralToken).safeIncreaseAllowance(router, toLiquidator);
+            uint256[] memory amounts = IUniswapV2Router(router).swapExactTokensForTokens(
+                toLiquidator, amountOutMin, path, msg.sender, deadline
+            );
+            IERC20(loan.collateralToken).approve(router, 0);
+            emit LoanLiquidatedWithSwap(
+                loanId, router, path[path.length - 1], toLiquidator, amounts[amounts.length - 1]
+            );
+        }
+
+        // burn position NFTs if present
+        if (address(loanPositionNFT) != address(0)) {
+            if (loan.lenderPositionTokenId != 0) loanPositionNFT.burn(loan.lenderPositionTokenId);
+            if (loan.borrowerPositionTokenId != 0) loanPositionNFT.burn(loan.borrowerPositionTokenId);
+        }
+
+        loan.liquidated = true;
     }
 }

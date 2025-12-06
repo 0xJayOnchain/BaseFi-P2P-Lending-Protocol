@@ -1,43 +1,46 @@
 module.exports = {
   extends: ["solhint:recommended"],
   rules: {
-    // Relax NatSpec to reduce noise overall
+    // Keep NatSpec focused on user-facing APIs; no need to tag every variable or internal function
     "use-natspec": [
       "warn",
       {
-        functions: ["public", "external"],
         contract: true,
+        functions: ["public", "external"],
+        events: false,
         methods: false,
-        events: false
+        // do not require variable-level @notice anywhere
+        variables: false,
       }
     ],
     // Common style relaxations
     "func-name-mixedcase": "off",
     "var-name-mixedcase": "off",
-    // Don't enforce one-contract-per-file in tests/mocks
+    // Enforce one-contract-per-file by default (tests override below)
     "one-contract-per-file": "error",
   },
   overrides: [
     {
       files: ["test/**/*.sol", "src/mocks/**/*.sol"],
       rules: {
-        // Tests and mocks can have multiple contracts and minimal NatSpec
-        "one-contract-per-file": "off",
+        // Tests and mocks: no NatSpec, allow multiple contracts, keep visibility as a gentle reminder
         "use-natspec": "off",
-        "state-visibility": "warn"
+        "one-contract-per-file": "off",
+        "state-visibility": "warn",
       }
     },
     {
       files: ["src/interfaces/**/*.sol"],
       rules: {
-        // Interfaces typically keep docs light
+        // Interfaces should be light; doc only public/external functions if you want
         "use-natspec": [
           "warn",
           {
-            functions: ["public", "external"],
             contract: false,
+            functions: ["public", "external"],
+            events: false,
             methods: false,
-            events: false
+            variables: false,
           }
         ]
       }
