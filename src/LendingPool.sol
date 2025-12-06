@@ -637,6 +637,21 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         emit OwnerFeesClaimed(token, owner(), amt);
     }
 
+    /// @notice Claim accumulated owner fees for multiple tokens in one call
+    /// @param tokens The array of token addresses to claim fees for
+    function claimOwnerFeesBatch(address[] calldata tokens) external onlyOwner nonReentrant whenNotPaused {
+        require(tokens.length > 0, "no tokens");
+        address to = owner();
+        for (uint256 i = 0; i < tokens.length; i++) {
+            address token = tokens[i];
+            uint256 amt = ownerFees[token];
+            if (amt == 0) continue;
+            ownerFees[token] = 0;
+            _safeTransfer(IERC20(token), to, amt);
+            emit OwnerFeesClaimed(token, to, amt);
+        }
+    }
+
     /// @notice Owner-only: swap all accumulated fees in tokenIn to tokenOut via a Uniswap V2-like router.
     /// @dev Uses check-effects-interactions, SafeERC20 approvals, and emits OwnerFeesSwapped.
     /// @param router The router contract address
