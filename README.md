@@ -21,7 +21,7 @@ forge test -vv
 forge build
 ```
 
-Contracts live in `src/` and tests live in `test/` (Foundry). The project uses OpenZeppelin contracts located in `lib/openzeppelin-contracts` and `lib/forge-std` for testing helpers.
+Contracts live in `src/` and tests live in `test/` (Foundry). The project uses OpenZeppelin contracts located in `lib/openzeppelin-contracts` and `lib/forge-std` for testing helpers. Environment configs live in `config/`.
 
 Key contracts
 - `PriceOracle.sol` — registry of chainlink-like aggregators and normalizes prices to 1e18.
