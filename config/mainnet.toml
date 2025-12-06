@@ -1,0 +1,35 @@
+# Mainnet environment config
+
+[contracts]
+LendingPool = "0xYourMainnetPoolAddress"
+PriceOracle = "0xYourMainnetOracleAddress"
+LoanPositionNFT = "0xYourMainnetNFTAddress"
+
+[routers]
+whitelist = ["0xUniswapV2Mainnet", "0xUniswapV3Mainnet", "0xAggregatorMainnet"]
+
+[oracle]
+maxPriceAge = 600
+
+[validation]
+enforceCollateralValidation = true
+
+[risk]
+minInterestRateBPS = 100
+maxInterestRateBPS = 2000
+liquidationGracePeriodSecs = 3600
+maxDurationSecs = 180 * 24 * 3600
+
+globalActivePrincipalCap = 100_000_000_000_000_000_000 # 100e18
+
+[assetCaps]
+# "0xTokenA" = 10_000_000_000_000_000_000
+
+[borrowerCaps]
+# "0xBorrower" = 1_000_000_000_000_000_000
+
+[lenderCaps]
+# "0xLender" = 20_000_000_000_000_000_000
+
+[guardian]
+address = "0xYourMainnetGuardian"

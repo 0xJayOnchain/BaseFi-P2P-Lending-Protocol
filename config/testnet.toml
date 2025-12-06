@@ -1,0 +1,38 @@
+# Testnet environment config (e.g., Base Sepolia)
+
+[contracts]
+LendingPool = "0xYourTestnetPoolAddress"
+PriceOracle = "0xYourTestnetOracleAddress"
+LoanPositionNFT = "0xYourTestnetNFTAddress"
+
+[routers]
+whitelist = ["0xUniswapV2Testnet", "0xUniswapV3Testnet", "0xAggregatorTestnet"]
+
+[oracle]
+maxPriceAge = 1800
+
+[validation]
+enforceCollateralValidation = true
+
+[risk]
+minInterestRateBPS = 100
+maxInterestRateBPS = 1200
+liquidationGracePeriodSecs = 3600
+maxDurationSecs = 90 * 24 * 3600
+
+globalActivePrincipalCap = 10_000_000_000_000_000_000 # 10e18
+
+[assetCaps]
+# token => cap
+# "0xTokenA" = 1_000_000_000_000_000_000
+
+[borrowerCaps]
+# address => cap per borrower
+# "0xBorrower" = 100_000_000_000_000_000
+
+[lenderCaps]
+# address => cap per lender
+# "0xLender" = 2_000_000_000_000_000_000
+
+[guardian]
+address = "0xYourTestnetGuardian"

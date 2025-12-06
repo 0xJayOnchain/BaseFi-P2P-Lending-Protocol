@@ -1,0 +1,41 @@
+# Dev environment config (local/mocks)
+
+[contracts]
+LendingPool = "0xYourDevPoolAddress"
+PriceOracle = "0xYourDevOracleAddress"
+LoanPositionNFT = "0xYourDevNFTAddress"
+
+[routers]
+# Uniswap V2-style router addresses
+whitelist = ["0xDevRouterV2"]
+
+[oracle]
+maxPriceAge = 3600
+
+[validation]
+enforceCollateralValidation = true
+
+[risk]
+# zero disables
+minInterestRateBPS = 0
+maxInterestRateBPS = 0
+liquidationGracePeriodSecs = 0
+maxDurationSecs = 0
+
+globalActivePrincipalCap = 0
+
+[assetCaps]
+# token => cap
+# "0xTokenA" = 0
+# "0xTokenB" = 0
+
+[borrowerCaps]
+# address => cap
+# "0xBorrower" = 0
+
+[lenderCaps]
+# address => cap
+# "0xLender" = 0
+
+[guardian]
+address = "0xYourDevGuardian"

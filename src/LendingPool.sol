@@ -69,6 +69,8 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     mapping(address => bool) public routerWhitelist;
     /// @notice Whether to enforce collateral validation at match time
     bool public enforceCollateralValidation;
+    /// @notice Optional guardian who can pause the protocol (owner can always pause/unpause)
+    address public guardian;
 
     /// @notice Counter for generating unique offer IDs
     uint256 public nextOfferId = 1;
@@ -155,8 +157,31 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     uint256 public ownerFeeBPS;
     /// @notice Liquidation penalty in basis points (default 2%)
     uint256 public penaltyBPS = 200;
+    /// @notice Optional liquidation grace period in seconds added to loan duration before expiry-based liquidation
+    uint256 public liquidationGracePeriodSecs;
+    /// @notice Global interest rate band constraints (optional). If both are zero, band is disabled.
+    uint256 public minInterestRateBPS;
+    uint256 public maxInterestRateBPS;
     /// @notice Accumulated owner fees per token
     mapping(address => uint256) public ownerFees;
+    /// @notice Per-asset cap for active principal (0 disables)
+    mapping(address => uint256) public assetCaps;
+    /// @notice Active principal tracked per asset
+    mapping(address => uint256) public activePrincipalByAsset;
+    /// @notice Per-borrower cap for active principal (0 disables)
+    mapping(address => uint256) public borrowerCaps;
+    /// @notice Active principal tracked per borrower
+    mapping(address => uint256) public activeBorrowPrincipal;
+    /// @notice Per-lender cap for active principal (0 disables)
+    mapping(address => uint256) public lenderCaps;
+    /// @notice Active principal tracked per lender
+    mapping(address => uint256) public activeLendPrincipal;
+    /// @notice Global cap for total active principal across all assets (0 disables)
+    uint256 public globalActivePrincipalCap;
+    /// @notice Total active principal across all assets
+    uint256 public globalActivePrincipal;
+    /// @notice Optional maximum duration in seconds for loans (0 disables)
+    uint256 public maxDurationSecs;
 
     /// @notice Emitted when owner fee BPS is updated
     /// @param oldBps The previous fee in basis points
@@ -171,6 +196,11 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     /// @param to The address receiving the fees
     /// @param amount The amount of fees claimed
     event OwnerFeesClaimed(address indexed token, address indexed to, uint256 indexed amount);
+    /// @notice Emitted after batch owner fee claims complete
+    /// @param to The recipient (owner)
+    /// @param tokens The list of tokens processed
+    /// @param amounts The amounts claimed for each token (0 if skipped)
+    event OwnerFeesClaimedBatch(address indexed to, address[] tokens, uint256[] amounts);
     /// @notice Emitted when a loan is liquidated
     /// @param loanId The ID of the liquidated loan
     /// @param liquidator The address of the liquidator
@@ -190,6 +220,56 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     event OwnerFeesSwapped(
         address indexed tokenIn, address indexed tokenOut, uint256 indexed amountIn, uint256 amountOut
     );
+    /// @notice Emitted when a borrower repays a loan using a swap
+    /// @param loanId The ID of the repaid loan
+    /// @param router The router used for the swap
+    /// @param tokenIn The input token provided by the borrower
+    /// @param amountIn The amount of input tokens swapped
+    /// @param amountOut The amount of lend tokens received from the swap
+    event RepayWithSwap(
+        uint256 indexed loanId, address indexed router, address indexed tokenIn, uint256 amountIn, uint256 amountOut
+    );
+    /// @notice Emitted when a loan is liquidated with swap and proceeds sent to the liquidator in desired token
+    /// @param loanId The ID of the liquidated loan
+    /// @param router The router used for the swap
+    /// @param tokenOut The output token sent to the liquidator
+    /// @param collateralIn The amount of collateral used as input to the swap
+    /// @param amountOut The amount of output tokens received by the liquidator
+    event LoanLiquidatedWithSwap(
+        uint256 indexed loanId,
+        address indexed router,
+        address indexed tokenOut,
+        uint256 collateralIn,
+        uint256 amountOut
+    );
+
+    /// @notice Emitted when a loan is matched/created
+    /// @param loanId The new loan ID
+    /// @param borrower The borrower address
+    /// @param lender The lender address
+    /// @param lendToken The lend token address
+    /// @param collateralToken The collateral token address
+    /// @param principal The principal amount
+    /// @param interestRateBPS Interest rate in basis points
+    /// @param durationSecs Loan duration in seconds
+    /// @param startTime Loan start timestamp
+    event LoanMatched(
+        uint256 indexed loanId,
+        address indexed borrower,
+        address indexed lender,
+        address lendToken,
+        address collateralToken,
+        uint256 principal,
+        uint256 interestRateBPS,
+        uint256 durationSecs,
+        uint256 startTime
+    );
+
+    /// @notice Emitted when a loan is closed (repaid or liquidated)
+    /// @param loanId The loan ID
+    /// @param status The closure status: "repaid" | "repaidSwap" | "liquidated" | "liquidatedSwap"
+    /// @param actor The caller who executed the close
+    event LoanClosed(uint256 indexed loanId, string status, address actor);
 
     /// @notice Emitted when a lending offer is created
     /// @param id The offer ID
@@ -220,6 +300,37 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     /// @notice Emitted when collateral validation enforcement is toggled
     /// @param enabled Whether enforcement is enabled
     event EnforceCollateralValidationSet(bool indexed enabled);
+    /// @notice Emitted when guardian is set
+    /// @param newGuardian The new guardian address
+    event GuardianSet(address indexed newGuardian);
+    /// @notice Emitted when liquidation grace period is updated
+    /// @param oldSecs The previous grace period seconds
+    /// @param newSecs The new grace period seconds
+    event LiquidationGracePeriodSet(uint256 indexed oldSecs, uint256 indexed newSecs);
+    /// @notice Emitted when interest rate band is updated
+    /// @param minBps The minimum allowed interest rate (BPS)
+    /// @param maxBps The maximum allowed interest rate (BPS)
+    event InterestRateBandSet(uint256 indexed minBps, uint256 indexed maxBps);
+    /// @notice Emitted when an asset cap is set
+    /// @param token The asset token address
+    /// @param cap The cap value (principal units)
+    event AssetCapSet(address indexed token, uint256 indexed cap);
+    /// @notice Emitted when a borrower cap is set
+    /// @param borrower The borrower address
+    /// @param cap The cap value
+    event BorrowerCapSet(address indexed borrower, uint256 indexed cap);
+    /// @notice Emitted when a lender cap is set
+    /// @param lender The lender address
+    /// @param cap The cap value
+    event LenderCapSet(address indexed lender, uint256 indexed cap);
+    /// @notice Emitted when global active principal cap is set
+    /// @param oldCap Previous cap
+    /// @param newCap New cap
+    event GlobalActivePrincipalCapSet(uint256 indexed oldCap, uint256 indexed newCap);
+    /// @notice Emitted when maximum duration is set
+    /// @param oldSecs Previous max duration seconds
+    /// @param newSecs New max duration seconds
+    event MaxDurationSecsSet(uint256 indexed oldSecs, uint256 indexed newSecs);
 
     /// @notice Constructor initializes the lending pool with a price oracle
     /// @param _priceOracle Address of the price oracle contract
@@ -248,13 +359,21 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     }
 
     /// @notice Pause the protocol critical functions
-    function pause() external onlyOwner {
+    function pause() external {
+        require(msg.sender == owner() || msg.sender == guardian, "not authorized");
         _pause();
     }
 
     /// @notice Unpause the protocol
     function unpause() external onlyOwner {
         _unpause();
+    }
+
+    /// @notice Set the guardian address (can pause, cannot unpause)
+    /// @param _guardian The guardian address (set to 0 to disable)
+    function setGuardian(address _guardian) external onlyOwner {
+        guardian = _guardian;
+        emit GuardianSet(_guardian);
     }
 
     /// @notice Manage router whitelist for swaps
@@ -290,6 +409,68 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         emit PenaltyBpsUpdated(old, bps);
     }
 
+    /// @notice Set the liquidation grace period in seconds (added to loan duration)
+    /// @param secs The grace period seconds
+    function setLiquidationGracePeriodSecs(uint256 secs) external onlyOwner {
+        uint256 old = liquidationGracePeriodSecs;
+        liquidationGracePeriodSecs = secs;
+        emit LiquidationGracePeriodSet(old, secs);
+    }
+
+    /// @notice Set global interest rate band constraints
+    /// @param minBps Minimum interest rate in BPS (0 disables lower bound)
+    /// @param maxBps Maximum interest rate in BPS (0 disables upper bound)
+    function setInterestRateBand(uint256 minBps, uint256 maxBps) external onlyOwner {
+        require(maxBps == 0 || maxBps <= 10000, "max>10000");
+        require(minBps == 0 || minBps <= 10000, "min>10000");
+        if (minBps != 0 && maxBps != 0) {
+            require(minBps <= maxBps, "min>max");
+        }
+        minInterestRateBPS = minBps;
+        maxInterestRateBPS = maxBps;
+        emit InterestRateBandSet(minBps, maxBps);
+    }
+
+    /// @notice Set per-asset cap for active principal
+    /// @param token Asset token address
+    /// @param cap Cap in principal units (0 disables)
+    function setAssetCap(address token, uint256 cap) external onlyOwner {
+        assetCaps[token] = cap;
+        emit AssetCapSet(token, cap);
+    }
+
+    /// @notice Set per-borrower cap for active principal
+    /// @param borrower Borrower address
+    /// @param cap Cap in principal units (0 disables)
+    function setBorrowerCap(address borrower, uint256 cap) external onlyOwner {
+        borrowerCaps[borrower] = cap;
+        emit BorrowerCapSet(borrower, cap);
+    }
+
+    /// @notice Set per-lender cap for active principal
+    /// @param lender Lender address
+    /// @param cap Cap in principal units (0 disables)
+    function setLenderCap(address lender, uint256 cap) external onlyOwner {
+        lenderCaps[lender] = cap;
+        emit LenderCapSet(lender, cap);
+    }
+
+    /// @notice Set global cap for active principal across all assets
+    /// @param cap Cap in principal units (0 disables)
+    function setGlobalActivePrincipalCap(uint256 cap) external onlyOwner {
+        uint256 old = globalActivePrincipalCap;
+        globalActivePrincipalCap = cap;
+        emit GlobalActivePrincipalCapSet(old, cap);
+    }
+
+    /// @notice Set maximum duration for loans in seconds (0 disables)
+    /// @param secs Max duration seconds
+    function setMaxDurationSecs(uint256 secs) external onlyOwner {
+        uint256 old = maxDurationSecs;
+        maxDurationSecs = secs;
+        emit MaxDurationSecsSet(old, secs);
+    }
+
     /// @notice Create a lending offer by depositing tokens
     /// @param lendToken The token address to lend
     /// @param amount The amount to lend
@@ -307,6 +488,13 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         uint256 collateralRatioBPS
     ) external virtual nonReentrant whenNotPaused returns (uint256) {
         require(amount > 0, "amount>0");
+        // enforce interest band if configured
+        if (minInterestRateBPS != 0) {
+            require(interestRateBPS >= minInterestRateBPS, "rate<min");
+        }
+        if (maxInterestRateBPS != 0) {
+            require(interestRateBPS <= maxInterestRateBPS, "rate>max");
+        }
         // transfer principal into escrow and verify received equals requested (reject fee-on-transfer tokens)
         uint256 beforeBal = IERC20(lendToken).balanceOf(address(this));
         _safeTransferFrom(IERC20(lendToken), msg.sender, address(this), amount);
@@ -414,6 +602,29 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         Offer storage o = offers[offerId];
         require(o.active, "offer not active");
 
+        // enforce max duration if configured
+        if (maxDurationSecs != 0) {
+            require(o.durationSecs <= maxDurationSecs, "duration>max");
+        }
+        // enforce caps prior to creation
+        uint256 principalAmt = o.amount;
+        uint256 assetCap = assetCaps[o.lendToken];
+        if (assetCap != 0) {
+            require(activePrincipalByAsset[o.lendToken] + principalAmt <= assetCap, "asset cap");
+        }
+        uint256 gcap = globalActivePrincipalCap;
+        if (gcap != 0) {
+            require(globalActivePrincipal + principalAmt <= gcap, "global cap");
+        }
+        uint256 bcap = borrowerCaps[msg.sender];
+        if (bcap != 0) {
+            require(activeBorrowPrincipal[msg.sender] + principalAmt <= bcap, "borrower cap");
+        }
+        uint256 lcap = lenderCaps[o.lender];
+        if (lcap != 0) {
+            require(activeLendPrincipal[o.lender] + principalAmt <= lcap, "lender cap");
+        }
+
         // transfer collateral from borrower
         _safeTransferFrom(IERC20(o.collateralToken), msg.sender, address(this), collateralAmount);
 
@@ -462,6 +673,22 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         }
 
         emit LendingOfferCreated(offerId, o.lender, o.lendToken, o.amount);
+        // accounting: increment active principal trackers
+        globalActivePrincipal += principalAmt;
+        activePrincipalByAsset[o.lendToken] += principalAmt;
+        activeBorrowPrincipal[msg.sender] += principalAmt;
+        activeLendPrincipal[o.lender] += principalAmt;
+        emit LoanMatched(
+            loanId,
+            msg.sender,
+            o.lender,
+            o.lendToken,
+            o.collateralToken,
+            o.amount,
+            o.interestRateBPS,
+            o.durationSecs,
+            loans[loanId].startTime
+        );
         return loanId;
     }
 
@@ -471,6 +698,36 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
     function acceptRequestByLender(uint256 requestId) external nonReentrant whenNotPaused returns (uint256) {
         Request storage r = requests[requestId];
         require(r.active, "request not active");
+        // enforce max duration if configured
+        if (maxDurationSecs != 0) {
+            require(r.durationSecs <= maxDurationSecs, "duration>max");
+        }
+        // enforce caps prior to creation
+        uint256 principalAmt = r.amount;
+        uint256 assetCap = assetCaps[r.borrowToken];
+        if (assetCap != 0) {
+            require(activePrincipalByAsset[r.borrowToken] + principalAmt <= assetCap, "asset cap");
+        }
+        uint256 gcap = globalActivePrincipalCap;
+        if (gcap != 0) {
+            require(globalActivePrincipal + principalAmt <= gcap, "global cap");
+        }
+        uint256 bcap = borrowerCaps[r.borrower];
+        if (bcap != 0) {
+            require(activeBorrowPrincipal[r.borrower] + principalAmt <= bcap, "borrower cap");
+        }
+        uint256 lcap = lenderCaps[msg.sender];
+        if (lcap != 0) {
+            require(activeLendPrincipal[msg.sender] + principalAmt <= lcap, "lender cap");
+        }
+
+        // enforce interest band if configured
+        if (minInterestRateBPS != 0) {
+            require(r.maxInterestRateBPS >= minInterestRateBPS, "rate<min");
+        }
+        if (maxInterestRateBPS != 0) {
+            require(r.maxInterestRateBPS <= maxInterestRateBPS, "rate>max");
+        }
 
         // transfer principal from lender to contract
         _safeTransferFrom(IERC20(r.borrowToken), msg.sender, address(this), r.amount);
@@ -537,6 +794,22 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         }
 
         emit BorrowRequestCreated(requestId, r.borrower, r.collateralToken, r.collateralAmount);
+        // accounting: increment active principal trackers
+        globalActivePrincipal += principalAmt;
+        activePrincipalByAsset[r.borrowToken] += principalAmt;
+        activeBorrowPrincipal[r.borrower] += principalAmt;
+        activeLendPrincipal[msg.sender] += principalAmt;
+        emit LoanMatched(
+            loanId,
+            r.borrower,
+            msg.sender,
+            r.borrowToken,
+            r.collateralToken,
+            r.amount,
+            r.maxInterestRateBPS,
+            r.durationSecs,
+            loans[loanId].startTime
+        );
         return loanId;
     }
 
@@ -603,6 +876,9 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         }
 
         loan.repaid = true;
+        // accounting: decrement active principal trackers
+        _decrementActivePrincipal(loan);
+        emit LoanClosed(loanId, "repaid", msg.sender);
     }
 
     /// @notice Claim accumulated owner fees for a token
@@ -613,6 +889,24 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         ownerFees[token] = 0;
         _safeTransfer(IERC20(token), owner(), amt);
         emit OwnerFeesClaimed(token, owner(), amt);
+    }
+
+    /// @notice Claim accumulated owner fees for multiple tokens in one call
+    /// @param tokens The array of token addresses to claim fees for
+    function claimOwnerFeesBatch(address[] calldata tokens) external onlyOwner nonReentrant whenNotPaused {
+        require(tokens.length > 0, "no tokens");
+        address to = owner();
+        uint256[] memory amounts = new uint256[](tokens.length);
+        for (uint256 i = 0; i < tokens.length; i++) {
+            address token = tokens[i];
+            uint256 amt = ownerFees[token];
+            amounts[i] = amt;
+            if (amt == 0) continue;
+            ownerFees[token] = 0;
+            _safeTransfer(IERC20(token), to, amt);
+            emit OwnerFeesClaimed(token, to, amt);
+        }
+        emit OwnerFeesClaimedBatch(to, tokens, amounts);
     }
 
     /// @notice Owner-only: swap all accumulated fees in tokenIn to tokenOut via a Uniswap V2-like router.
@@ -654,6 +948,74 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         emit OwnerFeesSwapped(tokenIn, tokenOut, amtIn, amountOut);
     }
 
+    /// @notice Opt-in: Borrower repays full loan using a swap from an arbitrary input token to the lend token
+    /// @dev Uses a whitelisted Uniswap V2-like router. Slippage guarded via borrower-provided amountOutMin and deadline.
+    /// @param loanId The loan ID to repay
+    /// @param router The router contract address (must be whitelisted)
+    /// @param amountIn The amount of input tokens to swap
+    /// @param path The swap path; first token is the input token provided by borrower, last must equal the loan lend token
+    /// @param amountOutMin The minimum acceptable amount of lend tokens from the swap (should be >= totalDue)
+    /// @param deadline Unix timestamp after which the swap will revert
+    function repayFullWithSwap(
+        uint256 loanId,
+        address router,
+        uint256 amountIn,
+        address[] calldata path,
+        uint256 amountOutMin,
+        uint256 deadline
+    ) external nonReentrant whenNotPaused {
+        Loan storage loan = loans[loanId];
+        require(loan.id != 0, "invalid loan");
+        require(!loan.repaid && !loan.liquidated, "loan closed");
+        require(msg.sender == loan.borrower, "only borrower");
+        require(router != address(0), "router=0");
+        require(routerWhitelist[router], "router not whitelisted");
+        require(path.length >= 2, "bad path");
+        require(amountIn > 0, "amountIn>0");
+        require(path[path.length - 1] == loan.lendToken, "path last != lendToken");
+
+        // compute total due
+        uint256 interest = accruedInterest(loanId);
+        uint256 ownerFee = (interest * ownerFeeBPS) / 10000;
+        uint256 lenderInterest = interest - ownerFee;
+        uint256 totalDue = loan.principal + interest;
+
+        // take input tokens from borrower into pool and approve router
+        _safeTransferFrom(IERC20(path[0]), msg.sender, address(this), amountIn);
+        IERC20(path[0]).safeIncreaseAllowance(router, amountIn);
+
+        // swap to lend token with proceeds to this contract
+        uint256[] memory amounts =
+            IUniswapV2Router(router).swapExactTokensForTokens(amountIn, amountOutMin, path, address(this), deadline);
+
+        // clear allowance
+        IERC20(path[0]).approve(router, 0);
+
+        uint256 amountOut = amounts[amounts.length - 1];
+        require(amountOut >= totalDue, "insufficient out");
+
+        // pay lender principal + interest - owner fee in lend token
+        _safeTransfer(IERC20(loan.lendToken), loan.lender, loan.principal + lenderInterest);
+
+        // accumulate owner fee in lend token
+        ownerFees[loan.lendToken] += ownerFee;
+
+        // return collateral to borrower
+        _safeTransfer(IERC20(loan.collateralToken), loan.borrower, loan.collateralAmount);
+
+        // burn NFTs if present
+        if (address(loanPositionNFT) != address(0)) {
+            if (loan.lenderPositionTokenId != 0) loanPositionNFT.burn(loan.lenderPositionTokenId);
+            if (loan.borrowerPositionTokenId != 0) loanPositionNFT.burn(loan.borrowerPositionTokenId);
+        }
+
+        loan.repaid = true;
+        emit RepayWithSwap(loanId, router, path[0], amountIn, amountOut);
+        // accounting: decrement active principal trackers
+        _decrementActivePrincipal(loan);
+        emit LoanClosed(loanId, "repaidSwap", msg.sender);
+    }
+
     /// @notice Liquidate a loan if expired or undercollateralized. Caller must be lender or lender-NFT owner.
     /// @param loanId The loan ID to liquidate
     function liquidate(uint256 loanId) external nonReentrant whenNotPaused {
@@ -671,7 +1033,7 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
         }
 
         // check expiry
-        bool expired = (block.timestamp > loan.startTime + loan.durationSecs);
+        bool expired = (block.timestamp > loan.startTime + loan.durationSecs + liquidationGracePeriodSecs);
 
         // check undercollateralization if collateral ratio present
         bool undercollateralized = false;
@@ -721,5 +1083,119 @@ contract LendingPool is BaseP2P, ReentrancyGuard, Pausable {
 
         loan.liquidated = true;
         emit LoanLiquidated(loanId, msg.sender, toLiquidator, penaltyCollateral);
+        // accounting: decrement active principal trackers
+        _decrementActivePrincipal(loan);
+        emit LoanClosed(loanId, "liquidated", msg.sender);
+    }
+
+    /// @notice Opt-in: Liquidate a loan and swap the liquidator's collateral share into a desired token via a whitelisted router
+    /// @param loanId The loan ID to liquidate
+    /// @param router The router contract address (must be whitelisted)
+    /// @param path The swap path; first token must be the collateral token, last is the desired output token for the liquidator
+    /// @param amountOutMin The minimum acceptable amount of output tokens for the liquidator
+    /// @param deadline Unix timestamp after which the swap will revert
+    function liquidateWithSwap(
+        uint256 loanId,
+        address router,
+        address[] calldata path,
+        uint256 amountOutMin,
+        uint256 deadline
+    ) external nonReentrant whenNotPaused {
+        Loan storage loan = loans[loanId];
+        require(loan.id != 0, "invalid loan");
+        require(!loan.repaid && !loan.liquidated, "loan closed");
+
+        // permission: lender or current owner of lender position NFT
+        bool isLender = (msg.sender == loan.lender);
+        if (!isLender && address(loanPositionNFT) != address(0) && loan.lenderPositionTokenId != 0) {
+            address ownerOfLenderToken = loanPositionNFT.ownerOf(loan.lenderPositionTokenId);
+            require(msg.sender == ownerOfLenderToken, "not lender or token owner");
+        } else if (!isLender) {
+            revert("not lender");
+        }
+
+        require(router != address(0), "router=0");
+        require(routerWhitelist[router], "router not whitelisted");
+        require(path.length >= 2, "bad path");
+        require(path[0] == loan.collateralToken, "path first != collateral");
+
+        // check expiry
+        bool expired = (block.timestamp > loan.startTime + loan.durationSecs + liquidationGracePeriodSecs);
+
+        // check undercollateralization if collateral ratio present
+        bool undercollateralized = false;
+        if (loan.collateralRatioBPS > 0) {
+            uint256 pLend = priceOracle.getNormalizedPrice(loan.lendToken);
+            uint256 pColl = priceOracle.getNormalizedPrice(loan.collateralToken);
+            require(pLend > 0 && pColl > 0, "invalid price");
+            uint256 principalValue = (loan.principal * pLend) / 1e18;
+            uint256 collateralValue = (loan.collateralAmount * pColl) / 1e18;
+            uint256 requiredCollateralValue = (principalValue * loan.collateralRatioBPS) / 10000;
+            if (collateralValue < requiredCollateralValue) undercollateralized = true;
+        }
+
+        require(expired || undercollateralized, "not liquidatable");
+
+        // compute penalty and withhold in collateral units
+        uint256 penaltyInLend = (loan.principal * penaltyBPS) / 10000;
+        uint256 penaltyCollateral = 0;
+        if (penaltyInLend > 0) {
+            uint256 pLend = priceOracle.getNormalizedPrice(loan.lendToken);
+            uint256 pColl = priceOracle.getNormalizedPrice(loan.collateralToken);
+            require(pLend > 0 && pColl > 0, "invalid price");
+            penaltyCollateral = (penaltyInLend * pLend) / pColl;
+            if (penaltyCollateral > loan.collateralAmount) penaltyCollateral = loan.collateralAmount;
+            ownerFees[loan.collateralToken] += penaltyCollateral;
+        }
+
+        uint256 toLiquidator = loan.collateralAmount;
+        if (penaltyCollateral > 0) {
+            toLiquidator = loan.collateralAmount - penaltyCollateral;
+        }
+
+        // swap the liquidator's collateral share into desired token and send to liquidator
+        if (toLiquidator > 0) {
+            IERC20(loan.collateralToken).safeIncreaseAllowance(router, toLiquidator);
+            uint256[] memory amounts = IUniswapV2Router(router).swapExactTokensForTokens(
+                toLiquidator, amountOutMin, path, msg.sender, deadline
+            );
+            IERC20(loan.collateralToken).approve(router, 0);
+            emit LoanLiquidatedWithSwap(
+                loanId, router, path[path.length - 1], toLiquidator, amounts[amounts.length - 1]
+            );
+        }
+
+        // burn position NFTs if present
+        if (address(loanPositionNFT) != address(0)) {
+            if (loan.lenderPositionTokenId != 0) loanPositionNFT.burn(loan.lenderPositionTokenId);
+            if (loan.borrowerPositionTokenId != 0) loanPositionNFT.burn(loan.borrowerPositionTokenId);
+        }
+
+        loan.liquidated = true;
+        // accounting: decrement active principal trackers
+        _decrementActivePrincipal(loan);
+        emit LoanClosed(loanId, "liquidatedSwap", msg.sender);
+    }
+
+    /// @notice Internal: decrement active principal trackers on loan close
+    /// @param loan The loan storage reference
+    function _decrementActivePrincipal(Loan storage loan) internal {
+        uint256 principalAmt = loan.principal;
+        // guard against underflow
+        if (globalActivePrincipal >= principalAmt) {
+            globalActivePrincipal -= principalAmt;
+        }
+        uint256 ap = activePrincipalByAsset[loan.lendToken];
+        if (ap >= principalAmt) {
+            activePrincipalByAsset[loan.lendToken] = ap - principalAmt;
+        }
+        uint256 bb = activeBorrowPrincipal[loan.borrower];
+        if (bb >= principalAmt) {
+            activeBorrowPrincipal[loan.borrower] = bb - principalAmt;
+        }
+        uint256 ll = activeLendPrincipal[loan.lender];
+        if (ll >= principalAmt) {
+            activeLendPrincipal[loan.lender] = ll - principalAmt;
+        }
     }
 }
