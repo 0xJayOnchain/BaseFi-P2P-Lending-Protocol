@@ -83,3 +83,7 @@ Next recommended steps (Round 2 scope)
 CI & static analysis
 - GitHub Actions runs Foundry tests, Slither static analysis, and solhint style/lint checks. See `.github/workflows/ci.yml`.
 
+Security & audit prep
+- See `SECURITY.md` for threat model, invariants, safety checks, and an audit checklist.
+ - See `docs/architecture.md` for Mermaid diagrams of the architecture and key sequences (offer/request, match, repay, repayWithSwap, liquidate, liquidateWithSwap, batch fee claims).
+
