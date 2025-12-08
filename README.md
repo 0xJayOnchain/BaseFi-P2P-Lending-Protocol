@@ -1,3 +1,5 @@
+<div align="center">
+
 # 🌊 BaseFi P2P Lending Protocol
 
 ### *Your Money. Your Terms. Your Control.*
