@@ -92,3 +92,17 @@ Security & audit prep
  - See `docs/metrics.md` for a metrics catalog and frontend-friendly indexing notes.
  - See `docs/integrations.md` for router/aggregator adapters, wallet/dApp integration guidance, and an SDK outline.
 
+### Deployed addresses
+
+Base Sepolia (testnet):
+- PriceOracle: `0x428EeAD1456C43EaA2BfF10E71509f2cCbAA5fFf`
+- LoanPositionNFT: `0x950E723c8C75F925e5DB0aE388371621634920d0`
+- LendingPool: `0xE5cEdb79960ea461D778A130Da9cD279CD575331`
+
+Base mainnet:
+- PriceOracle: `TBD`
+- LoanPositionNFT: `TBD`
+- LendingPool: `TBD`
+
+NFT Name and Symbol
+"BaseFi Loan Position" "BFI-LP"

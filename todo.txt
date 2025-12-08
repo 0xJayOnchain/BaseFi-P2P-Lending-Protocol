@@ -20,7 +20,7 @@ Completed (Round 1)
  - Tests: coverage for paused behavior (incl. cancel), router whitelist, collateral validation, liquidation, owner sweep-and-swap, and staleness guard.
 
 In progress / Next (Round 2)
-- Eventing: emit events for pause/unpause, router whitelist changes, collateral validation toggles, oracle feed updates; ensure indexed params for analytics.
+- Eventing: emit events for pause/unpause, router whitelist changes, collateral validation toggles, oracle feed updates; ensure indexed params for analytics. (Scaffolded subgraph ready; mappings finalized for counters and unique IDs.)
 - Edge-case tests: fee-on-transfer tokens, unusual decimals, non-standard ERC20 behaviors (no return bool).
 - CI and static analysis: Slither, solhint, Foundry profile matrix; gas snapshots.
 - Optional user-opt-in repay/liquidate with conversion: slippage controls, router whitelist, price sanity checks.
@@ -44,6 +44,10 @@ Location of important files
 - `test/` — Foundry tests (see files mentioned in README)
 
 Notes for maintainers
+- Deployment notes (Base Sepolia → Base mainnet)
+- Deploy `PriceOracle` → `LoanPositionNFT` (with name/symbol) → `LendingPool` (constructor arg: oracle address).
+- Wire roles: `LendingPool.setLoanPositionNFT(<NFT>)` and `LoanPositionNFT.grantRole(MINTER_ROLE, <POOL>)`.
+- Configure pool params and oracle feeds; then update `docs/subgraph/subgraph.yaml` addresses for indexing.
 - Watch for `stack-too-deep` in complex functions; split assignments and extract helpers when necessary.
 - When adding contracts that inherit OpenZeppelin's `Ownable`, remember some constructors require parameters; pass `msg.sender` or owner address where appropriate.
 - NFT `supportsInterface` needs explicit overrides when combining `ERC721` and `AccessControl`.
